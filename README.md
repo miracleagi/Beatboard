@@ -1,171 +1,152 @@
-# Atlas — AI 媒体节点编辑器
+# Atlas — AI Media Node Editor
 
-用节点图的方式串联 AI 图像 / 视频生成工作流。基于 Tauri + React 构建的 macOS 桌面应用，使用 PixVerse CLI 在本地直接调用 AI 生成能力。
+A node-graph editor for chaining AI image and video generation into visual workflows. Built as a macOS desktop app with Tauri + React, powered by the PixVerse CLI.
+
+> 中文说明请见 [README.zh.md](README.zh.md)
 
 ---
 
-## Mac 安装
+## Installation (macOS)
 
-### 第一步：安装依赖
+### Step 1 — Install dependencies
 
-在终端运行安装脚本，自动完成以下工作：
-
-- 检测并安装 Node.js（通过 Homebrew）
-- 检测并安装 ffmpeg
-- 安装 PixVerse CLI（`npm install -g pixverse`）
-- 引导完成 PixVerse 账号登录
+Run the setup script to automatically install Node.js, ffmpeg, the PixVerse CLI, and log in to your PixVerse account:
 
 ```bash
 bash 安装PixVerse.sh
 ```
 
-> 如果提示"operation not permitted"，请先给脚本赋权：
+> If you see "operation not permitted", grant execute permission first:
 > ```bash
 > chmod +x 安装PixVerse.sh && ./安装PixVerse.sh
 > ```
 
-安装过程中系统可能弹出密码框，输入 Mac 登录密码即可（Homebrew 安装需要）。
+The script may prompt for your macOS password (required by Homebrew).
 
 ---
 
-### 第二步：打开 Atlas
+### Step 2 — Open Atlas
 
-安装完成后，双击 **`Atlas.app`** 启动，或从 DMG 拖入 Applications 文件夹后打开。
+Double-click **`Atlas.app`**, or drag it from the DMG into your Applications folder and launch it from there.
 
-> 首次打开如果系统提示"无法验证开发者"，请前往  
-> **系统设置 → 隐私与安全性 → 仍要打开**
-
----
-
-## 节点类型
-
-### 输入节点
-| 节点 | 说明 |
-|------|------|
-| **Prompt** | 文本提示词输入 |
-| **Asset** | 图片 / 视频素材（支持从本地磁盘选择，或从 Library 中选取） |
-
-### PixVerse 生成节点
-| 节点 | 说明 |
-|------|------|
-| **Image** | 文生图 / 图生图 |
-| **Video** | 文生视频 / 图生视频 |
-| **Transition** | 两张图之间的过渡视频 |
-| **Reference** | 多图 / 多视频参考生成 |
-| **Motion Control** | 用参考视频控制运动轨迹 |
-| **Extend** | 延长已有视频 |
-| **Upscale** | 视频超分辨率 |
-| **Speech** | 为视频添加 TTS 语音 |
-
-### 工具节点
-| 节点 | 说明 |
-|------|------|
-| **Pick** | 从多个候选结果中手动选一张 |
-| **ffmpeg** | 本地视频拼接 / 剪辑 |
-| **Output** | 将结果保存到本地目录 |
+> If macOS says "cannot verify the developer", go to  
+> **System Settings → Privacy & Security → Open Anyway**
 
 ---
 
-## 基本用法
+## Node Types
 
-1. 顶部 `+` 新建项目（支持模板）
-2. 从左侧面板拖入节点到画布
-3. 拖动右侧端口连接到下一个节点的左侧端口（自动类型校验）
-4. 右键节点 → **Run from here** 从当前节点开始运行
-5. 点击右上角 **Run** 运行整张图
-6. 运行中可点击 **Stop** 中断
+### Input nodes
+| Node | Description |
+|------|-------------|
+| **Prompt** | Text prompt input |
+| **Asset** | Image / video source — pick from local disk or the Library |
 
-**快捷操作：**
-- `Backspace / Delete` — 删除选中节点或连线
-- 右键节点 — 运行 / 复制 / 删除
-- 拖拽空白区域 — 平移画布
-- 点击空白区域 — 取消选中
+### PixVerse generation nodes
+| Node | Description |
+|------|-------------|
+| **Image** | Text-to-image or image-to-image |
+| **Video** | Text-to-video or image-to-video |
+| **Transition** | Transition video between two images |
+| **Reference** | Generate from multiple image / video references |
+| **Motion Control** | Drive motion with a reference video |
+| **Extend** | Extend an existing video |
+| **Upscale** | Upscale a video to higher resolution |
+| **Speech** | Add TTS audio to a video |
+
+### Utility nodes
+| Node | Description |
+|------|-------------|
+| **Pick** | Manually choose one result from multiple candidates |
+| **ffmpeg** | Local video concatenation / editing |
+| **Output** | Save results to a local directory |
 
 ---
 
-## 配置
+## Basic Usage
 
-点击右上角 **⚙ Config** 打开配置面板：
+1. Click **`+`** in the top bar to create a new project (templates available)
+2. Drag nodes from the left palette onto the canvas
+3. Drag from a right-side port to a compatible left-side port to connect nodes (type-checked, cycle-safe)
+4. Right-click a node → **Run from here** to run from that node forward
+5. Click **Run** (top right) to run the entire graph
+6. Click **Stop** to abort a running graph
 
-- **PixVerse CLI 路径**：通常自动检测，如安装在非标准路径可手动填写
-- **ffmpeg 路径**：同上
-- **项目默认输出目录**：Output 节点保存文件的默认位置
+**Shortcuts:**
+- `Backspace / Delete` — remove selected node or edge
+- Right-click a node — run / duplicate / delete
+- Drag empty canvas — pan
+- Click empty canvas — deselect
+
+---
+
+## Configuration
+
+Click **⚙ Config** (top right) to open the settings panel:
+
+- **PixVerse CLI path** — auto-detected in most cases; fill in manually if installed in a non-standard location
+- **ffmpeg path** — same as above
+- **Default output directory** — where the Output node saves files
 
 ---
 
 ## Library
 
-运行结果可以点击节点上的 **☆ 收藏** 按钮保存到 Library。  
-Library 中的素材可以跨项目复用，直接拖到画布上或在 Asset 节点的 Inspector 中选取。
+Click the **☆** button on any completed node to save its result to the Library.  
+Library items can be reused across projects — drag them onto the canvas or pick them inside an Asset node's Inspector panel.
 
 ---
 
-## 项目结构
+## Project Structure
 
 ```
-Atlas.app                    ← 桌面应用（Tauri 打包）
-安装PixVerse.sh              ← 一键安装依赖脚本
-dev.command                  ← 开发模式启动（需要 Rust 环境）
-src/                         ← 前端源码（JSX，不需要编译步骤）
-  shared.jsx                 ← 设计 token、图标、通用组件
-  state.jsx                  ← 状态管理、节点模板、Executor 接口
-  editor.jsx                 ← 画布：拖拽、连线、运行器
-  editor-node.jsx            ← 单个节点组件
-  editor-panels.jsx          ← 顶栏、左侧面板、右侧 Inspector
-  editor-app.jsx             ← 应用根组件、自动保存
-  graph.jsx                  ← 连线路径、端口
-  scenarios.jsx              ← 项目模板
-src-tauri/                   ← Rust 后端
-  src/main.rs                ← Tauri invoke 处理器
-  src/pixverse.rs            ← PixVerse CLI 参数解析与执行
-  src/ffmpeg.rs              ← ffmpeg 节点执行
-  src/thumbs.rs              ← 运行结果解析与缩略图下载
-  src/storage.rs             ← 项目文件持久化
-  src/utils.rs               ← 工具函数
-web/                         ← Tauri 静态资源目录（由 src/ 自动同步）
+Atlas.app                    ← Desktop app (Tauri bundle)
+安装PixVerse.sh              ← One-click dependency installer
+dev.command                  ← Development mode launcher (requires Rust)
+src/                         ← Frontend source (JSX, no build step needed)
+  shared.jsx                 ← Design tokens, icons, shared components
+  state.jsx                  ← State management, node templates, Executor interface
+  editor.jsx                 ← Canvas: drag, connect, runner
+  editor-node.jsx            ← Individual node component
+  editor-panels.jsx          ← Top bar, left palette, right Inspector
+  editor-app.jsx             ← App root, autosave
+  graph.jsx                  ← Edge paths, ports
+  scenarios.jsx              ← Project templates
+src-tauri/                   ← Rust backend
+  src/main.rs                ← Tauri invoke handlers
+  src/pixverse.rs            ← PixVerse CLI argument resolution & execution
+  src/ffmpeg.rs              ← ffmpeg node execution
+  src/thumbs.rs              ← Result parsing & thumbnail download
+  src/storage.rs             ← Project file persistence
+  src/utils.rs               ← Utility functions
+web/                         ← Tauri static asset root (auto-synced from src/)
 ```
 
 ---
 
-## 开发模式
+## Development
 
-需要先安装 [Rust](https://rustup.rs/) 工具链。
+Requires the [Rust toolchain](https://rustup.rs/).
 
 ```bash
 ./dev.command
 ```
 
-脚本会自动将 `src/` 同步到 `web/src/`，然后启动 `cargo tauri dev`（热重载）。
+This syncs `src/` → `web/src/` and runs `cargo tauri dev` with hot reload.
 
-### 发布构建
+### Release build
 
 ```bash
 cd src-tauri
 cargo tauri build
 ```
 
-产物在 `src-tauri/target/release/bundle/macos/`。
+Output: `src-tauri/target/release/bundle/macos/`
 
 ---
 
-## 数据持久化
+## Data Persistence
 
-所有项目数据保存在 macOS 应用数据目录（`~/Library/Application Support/com.atlas.app/`）。
+Project data is stored in the macOS app data directory (`~/Library/Application Support/com.atlas.app/`).
 
-数据格式：
-
-```jsonc
-{
-  "config": { "binPaths": { "pixverse": "", "ffmpeg": "" }, ... },
-  "projects": [
-    {
-      "id": "...", "name": "...", "color": "#...",
-      "graph": { "nodes": [...], "edges": [...] },
-      "runResults": { "<nodeId>": { "thumbs": [...] } },
-      "outputDir": "/Users/..."
-    }
-  ]
-}
-```
-
-顶部菜单 `+` → **Export** 可将单个项目导出为 `.atlas.json` 文件，随时可重新导入。
+Projects can be exported as `.atlas.json` files via **`+` → Export** and re-imported at any time.
