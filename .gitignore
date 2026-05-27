@@ -1,0 +1,12 @@
+# Rust / Tauri build output
+src-tauri/target/
+
+# Runtime outputs (generated media files)
+outputs/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Node / npm (if ever added)
+node_modules/

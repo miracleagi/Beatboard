@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Atlas · pipeline</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0f141c; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  #app { width: 100vw; height: 100vh; }
+  #app:empty::before {
+    content: 'Loading Atlas…';
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #5f7396; font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  }
+  #atlas-error {
+    display: none;
+    position: fixed; inset: 0; z-index: 9999;
+    background: #0f141c; color: #f87171;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    padding: 24px; overflow: auto; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="atlas-error"></div>
+
+<script>
+  // Catch any uncaught JS errors and show them in the window
+  // (Tauri webview has no visible console by default)
+  var _errors = [];
+  window.addEventListener('error', function(e) {
+    _errors.push((e.filename || '') + ':' + e.lineno + '\n' + e.message + (e.error ? '\n' + e.error.stack : ''));
+    var el = document.getElementById('atlas-error');
+    el.style.display = 'block';
+    el.textContent = '── JS ERROR ──\n' + _errors.join('\n\n──\n');
+  });
+  window.addEventListener('unhandledrejection', function(e) {
+    _errors.push('UnhandledPromise: ' + (e.reason && e.reason.stack ? e.reason.stack : String(e.reason)));
+    var el = document.getElementById('atlas-error');
+    el.style.display = 'block';
+    el.textContent = '── JS ERROR ──\n' + _errors.join('\n\n──\n');
+  });
+</script>
+
+<!-- Local copies of React + Babel (no internet required) -->
+<script src="lib/react.development.js"></script>
+<script src="lib/react-dom.development.js"></script>
+<script src="lib/babel.min.js"></script>
+
+<!-- Tauri bridge: sets window.AtlasStorage + window.AtlasExecutor -->
+<script src="tauri-bridge.js"></script>
+
+<!-- Shared primitives -->
+<script type="text/babel" src="src/shared.jsx"></script>
+<script type="text/babel" src="src/graph.jsx"></script>
+<script type="text/babel" src="src/scenarios.jsx"></script>
+
+<!-- App layers -->
+<script type="text/babel" src="src/state.jsx"></script>
+<script type="text/babel" src="src/editor-node.jsx"></script>
+<script type="text/babel" src="src/editor.jsx"></script>
+<script type="text/babel" src="src/editor-panels.jsx"></script>
+<script type="text/babel" src="src/editor-app.jsx"></script>
+</body>
+</html>

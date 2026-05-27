@@ -1,0 +1,74 @@
+{
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "rm -rf .atlas-runs && rm -rf web/src && cp -r src web/src",
+    "devPath": "../web",
+    "distDir": "../web",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "Atlas",
+    "version": "0.9.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "protocol": {
+        "asset": true,
+        "assetScope": ["$APPDATA/**", "$HOME/**"]
+      },
+      "dialog": {
+        "open": true,
+        "save": false,
+        "message": true
+      },
+      "window": {
+        "startDragging": true,
+        "maximize": true,
+        "unmaximize": true,
+        "minimize": true,
+        "close": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": ["dmg", "app"],
+      "identifier": "com.atlas.pipeline",
+      "icon": [
+        "icons/icon.png",
+        "icons/icon.icns"
+      ],
+      "resources": [],
+      "externalBin": [],
+      "copyright": "",
+      "category": "Productivity",
+      "shortDescription": "Local AI media pipeline editor",
+      "macOS": {
+        "frameworks": [],
+        "exceptionDomain": "",
+        "signingIdentity": "-",
+        "entitlements": null
+      }
+    },
+    "security": {
+      "csp": null
+    },
+    "updater": {
+      "active": false
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "resizable": true,
+        "title": "Atlas",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "url": "index.html",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ]
+  }
+}
