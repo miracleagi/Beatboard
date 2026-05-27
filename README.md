@@ -1,304 +1,171 @@
-# Atlas — local AI media pipeline
+# Atlas — AI 媒体节点编辑器
 
-A node-graph editor for chaining AI image / video generation through API
-calls and local CLI tools. Designed to be wrapped as a Tauri / Electron
-desktop app later; today it runs as a static HTML page.
+用节点图的方式串联 AI 图像 / 视频生成工作流。基于 Tauri + React 构建的 macOS 桌面应用，使用 PixVerse CLI 在本地直接调用 AI 生成能力。
 
-## Run locally on Mac
+---
 
-1. Copy this whole folder anywhere on your Mac.
-2. Double-click `run-atlas.command` — it starts a tiny localhost server and
-   opens `Atlas.html` in your default browser.
-3. Or run it manually:
-   ```sh
-   ./run-atlas.command
-   ```
+## Mac 安装
 
-Everything is static. No build step, no install. The localhost helper is used
-for two things:
-- serving `src/*.jsx` because current Chrome blocks browser Babel from reading
-  local files via `file://`
-- running allowed local CLI nodes, currently PixVerse, through `pixverse`
+### 第一步：安装依赖
 
-The page loads React + Babel from `unpkg.com`. If you need fully offline, see
-**Offline bundling** below.
+在终端运行安装脚本，自动完成以下工作：
 
-## What's in the box
+- 检测并安装 Node.js（通过 Homebrew）
+- 检测并安装 ffmpeg
+- 安装 PixVerse CLI（`npm install -g pixverse`）
+- 引导完成 PixVerse 账号登录
 
-- **`Atlas.html`** — the editor (this is the one you use)
-- **`run-atlas.command`** — starts the local helper and opens the editor
-- **`atlas-helper.mjs`** — localhost helper that serves files and runs PixVerse CLI nodes
-- **`atlas-bridge.js`** — browser-side executor bridge to the helper
-- **`Atlas Design Study.html`** — the original four-direction exploration
-  + component/state studies. Reference only; not the live tool.
-- **`src/`** — the source files, loaded directly via `<script type="text/babel">`
-- **`design-canvas.jsx`** / **`tweaks-panel.jsx`** — used only by the design study
+```bash
+bash 安装PixVerse.sh
+```
 
-The editor is in:
-| File | What it owns |
-| --- | --- |
-| `src/shared.jsx`        | Design tokens, icon set, placeholder, button, pill |
-| `src/graph.jsx`         | Edge paths, ports, CLI block, node preview (read-only Node for the design study) |
-| `src/scenarios.jsx`     | Three reference graphs used as new-project templates |
-| `src/state.jsx`         | Reducer, node templates, **Storage** and **Executor** interfaces |
-| `src/editor-node.jsx`   | Editable Node — inline-editable prompt/CLI, drag, ports |
-| `src/editor.jsx`        | Canvas with drag, connect, run, edges, context menu |
-| `src/editor-panels.jsx` | Top bar (tabs), left palette, right inspector, config modal |
-| `src/editor-app.jsx`    | App root, hydration, autosave, import/export |
+> 如果提示"operation not permitted"，请先给脚本赋权：
+> ```bash
+> chmod +x 安装PixVerse.sh && ./安装PixVerse.sh
+> ```
 
-## Current behaviour
+安装过程中系统可能弹出密码框，输入 Mac 登录密码即可（Homebrew 安装需要）。
 
-- **Multi-project tabs** at the top. `+` opens new-from-template / blank /
-  import. Tab name is inline-editable. `×` closes a tab (in-memory; the
-  underlying record stays in localStorage until you start over).
-- **Drag nodes** by the header. **Drag from any right-side port** to any
-  compatible left-side port (type-checked, no cycles). Click an empty
-  spot to deselect; drag empty canvas to pan.
-- **Inline edit** prompts, CLI command + flags, node titles.
-- **Right-click a node** for `Run from here · Duplicate · Delete`. The
-  small chip toolbar above a selected node does the same.
-- **Backspace / Delete** removes the selected node or edge.
-- **Run graph** (top-right) walks the graph in topological order. Today
-  PixVerse CLI nodes run through the local helper; non-PixVerse nodes use the
-  browser mock executor. Progress is painted onto every node in real time.
-- **Config** (top-right) opens a modal with API keys + local binary
-  paths. Stored on this machine only (localStorage). Mask/reveal per
-  field.
-- **Export** downloads the active project as `<slug>.atlas.json`. The
-  `+` menu can re-import any such file.
+---
 
-## Persistence
+### 第二步：打开 Atlas
 
-All state is stored at `localStorage["atlas.v1"]`. The format is:
+安装完成后，双击 **`Atlas.app`** 启动，或从 DMG 拖入 Applications 文件夹后打开。
+
+> 首次打开如果系统提示"无法验证开发者"，请前往  
+> **系统设置 → 隐私与安全性 → 仍要打开**
+
+---
+
+## 节点类型
+
+### 输入节点
+| 节点 | 说明 |
+|------|------|
+| **Prompt** | 文本提示词输入 |
+| **Asset** | 图片 / 视频素材（支持从本地磁盘选择，或从 Library 中选取） |
+
+### PixVerse 生成节点
+| 节点 | 说明 |
+|------|------|
+| **Image** | 文生图 / 图生图 |
+| **Video** | 文生视频 / 图生视频 |
+| **Transition** | 两张图之间的过渡视频 |
+| **Reference** | 多图 / 多视频参考生成 |
+| **Motion Control** | 用参考视频控制运动轨迹 |
+| **Extend** | 延长已有视频 |
+| **Upscale** | 视频超分辨率 |
+| **Speech** | 为视频添加 TTS 语音 |
+
+### 工具节点
+| 节点 | 说明 |
+|------|------|
+| **Pick** | 从多个候选结果中手动选一张 |
+| **ffmpeg** | 本地视频拼接 / 剪辑 |
+| **Output** | 将结果保存到本地目录 |
+
+---
+
+## 基本用法
+
+1. 顶部 `+` 新建项目（支持模板）
+2. 从左侧面板拖入节点到画布
+3. 拖动右侧端口连接到下一个节点的左侧端口（自动类型校验）
+4. 右键节点 → **Run from here** 从当前节点开始运行
+5. 点击右上角 **Run** 运行整张图
+6. 运行中可点击 **Stop** 中断
+
+**快捷操作：**
+- `Backspace / Delete` — 删除选中节点或连线
+- 右键节点 — 运行 / 复制 / 删除
+- 拖拽空白区域 — 平移画布
+- 点击空白区域 — 取消选中
+
+---
+
+## 配置
+
+点击右上角 **⚙ Config** 打开配置面板：
+
+- **PixVerse CLI 路径**：通常自动检测，如安装在非标准路径可手动填写
+- **ffmpeg 路径**：同上
+- **项目默认输出目录**：Output 节点保存文件的默认位置
+
+---
+
+## Library
+
+运行结果可以点击节点上的 **☆ 收藏** 按钮保存到 Library。  
+Library 中的素材可以跨项目复用，直接拖到画布上或在 Asset 节点的 Inspector 中选取。
+
+---
+
+## 项目结构
+
+```
+Atlas.app                    ← 桌面应用（Tauri 打包）
+安装PixVerse.sh              ← 一键安装依赖脚本
+dev.command                  ← 开发模式启动（需要 Rust 环境）
+src/                         ← 前端源码（JSX，不需要编译步骤）
+  shared.jsx                 ← 设计 token、图标、通用组件
+  state.jsx                  ← 状态管理、节点模板、Executor 接口
+  editor.jsx                 ← 画布：拖拽、连线、运行器
+  editor-node.jsx            ← 单个节点组件
+  editor-panels.jsx          ← 顶栏、左侧面板、右侧 Inspector
+  editor-app.jsx             ← 应用根组件、自动保存
+  graph.jsx                  ← 连线路径、端口
+  scenarios.jsx              ← 项目模板
+src-tauri/                   ← Rust 后端
+  src/main.rs                ← Tauri invoke 处理器
+  src/pixverse.rs            ← PixVerse CLI 参数解析与执行
+  src/ffmpeg.rs              ← ffmpeg 节点执行
+  src/thumbs.rs              ← 运行结果解析与缩略图下载
+  src/storage.rs             ← 项目文件持久化
+  src/utils.rs               ← 工具函数
+web/                         ← Tauri 静态资源目录（由 src/ 自动同步）
+```
+
+---
+
+## 开发模式
+
+需要先安装 [Rust](https://rustup.rs/) 工具链。
+
+```bash
+./dev.command
+```
+
+脚本会自动将 `src/` 同步到 `web/src/`，然后启动 `cargo tauri dev`（热重载）。
+
+### 发布构建
+
+```bash
+cd src-tauri
+cargo tauri build
+```
+
+产物在 `src-tauri/target/release/bundle/macos/`。
+
+---
+
+## 数据持久化
+
+所有项目数据保存在 macOS 应用数据目录（`~/Library/Application Support/com.atlas.app/`）。
+
+数据格式：
 
 ```jsonc
 {
-  "config": { "apiKeys": { ... }, "binPaths": { ... }, "defaultModel": "..." },
+  "config": { "binPaths": { "pixverse": "", "ffmpeg": "" }, ... },
   "projects": [
-    { "id": "...", "name": "...", "color": "#...",
+    {
+      "id": "...", "name": "...", "color": "#...",
       "graph": { "nodes": [...], "edges": [...] },
-      "runResults": { "<nodeId>": { "state": "done", "progress": 1 } },
-      "modifiedAt": 1700000000000
+      "runResults": { "<nodeId>": { "thumbs": [...] } },
+      "outputDir": "/Users/..."
     }
-  ],
-  "activeProjectId": "..."
+  ]
 }
 ```
 
-Exported `.atlas.json` files wrap one project at a time:
-
-```jsonc
-{ "format": "atlas-graph-v1", "project": { ...same shape as above... } }
-```
-
-## Wiring up real execution (the part you'll need)
-
-### PixVerse CLI image / video generation
-
-This app now includes two executable PixVerse nodes in the left palette:
-
-- `PixVerse · image` — runs text-to-image:
-  ```sh
-  pixverse create image --prompt "{prompt}" --model qwen-image --quality 1080p --aspect-ratio 16:9 --count 1 --timeout 300 --json
-  ```
-- `PixVerse · video` — runs text-to-video or image-to-video:
-  ```sh
-  pixverse create video --prompt "{prompt}" --image "{image}" --model v6 --duration 5 --quality 720p --aspect-ratio 16:9 --count 1 --timeout 600 --json
-  ```
-  If no upstream image is connected, the helper omits `--image` and the command
-  becomes text-to-video.
-
-Setup:
-
-1. Install / update PixVerse CLI:
-   ```sh
-   npm install -g pixverse
-   ```
-2. Authenticate once:
-   ```sh
-   pixverse auth login
-   ```
-3. Start Atlas with:
-   ```sh
-   ./run-atlas.command
-   ```
-4. Build a graph:
-   - drag `Prompt`
-   - drag `PixVerse · image` or `PixVerse · video`
-   - connect `Prompt` text output to the PixVerse node's `prompt` input
-   - for image-to-video, connect an upstream image output into the video node's
-     `src` input
-   - click `Run graph`
-
-The helper only executes CLI nodes whose command is `pixverse`; other legacy
-CLI nodes still run as mocks until a broader local command allowlist is added.
-PixVerse results are stored in `runResults`, including the raw JSON under
-`pixverse` and a normalized preview record under `thumbs`.
-
-You can edit PixVerse parameters directly in the node's CLI args or through the
-right inspector. Supported PixVerse image / video modes and parameters are
-listed up front in the inspector:
-
-```sh
-# Image
-T2I: --prompt
-I2I: --prompt --image
-I2I multi-image: --prompt --images
---model qwen-image
---model gpt-image-2.0
---quality 1080p
---aspect-ratio 16:9
---detail-level low|medium|high
---count 1
---seed 123
---idempotency-key key
---no-wait
---timeout 300
-
-# Video
-T2V: --prompt
-I2V: --prompt --image
---model v6
---model seedance-2.0-standard
---model veo-3.1-lite
---duration 5
---quality 720p
---aspect-ratio 16:9
---count 1
---seed 123
---audio
---no-audio
---multi-shot
---no-multi-shot
---off-peak
---idempotency-key key
---no-wait
---timeout 600
-```
-
-Two interfaces live in `src/state.jsx`:
-
-```js
-const LocalStorage = {
-  load() { ... },
-  save(state) { ... },
-};
-const Storage = window.AtlasStorage || LocalStorage;
-
-const MockExecutor = {
-  estimateMs(node) { ... },
-  async runNode(node, deps, ctx, onProgress) { ... },
-};
-const Executor = window.AtlasExecutor || MockExecutor;
-```
-
-To plug in a real executor **without touching the app**, define these
-on `window` *before* the app's scripts load:
-
-```html
-<script>
-  window.AtlasExecutor = {
-    async runNode(node, deps, ctx, onProgress) {
-      onProgress(0);
-      if (node.kind === 'cli') {
-        // future Tauri:
-        //   const { invoke } = await import('@tauri-apps/api');
-        //   return await invoke('run_cli', { bin: node.cli.bin, args: node.cli.args });
-        // today: POST to your own localhost helper if you want to test
-      }
-      if (node.kind === 'gen' && node.provider === 'replicate') {
-        const apiKey = ctx.config.apiKeys.replicate;
-        // call Replicate REST, poll until done, return result
-      }
-      onProgress(1);
-      return { ok: true };
-    }
-  };
-</script>
-<script type="text/babel" src="src/state.jsx"></script>
-...
-```
-
-The `ctx` passed in already carries:
-- `ctx.config` — the same config the user filled in the Config modal
-  (API keys + bin paths)
-- `ctx.abortRef.current.aborted` — set to `true` when the user hits Stop
-
-Deps (`deps[i].edge`, `deps[i].from`) give you the upstream node so you
-can pull its previous output, mount paths, etc.
-
-Return shape:
-```js
-{ ok: true }                         // done, no further data
-{ ok: true, thumbs: [{ seed, label, chosen }, ...] }  // results visible in node body
-{ ok: false, error: 'human-readable message' }       // halts downstream
-```
-
-`onProgress(0..1)` should be called periodically — the UI paints a
-shimmer + progress bar from it.
-
-### Likely Tauri layout (target)
-
-```
-src-tauri/
-  src/
-    main.rs              # invoke handlers: run_cli, save_graph, load_graph
-  Cargo.toml
-src/
-  shared.jsx, graph.jsx, state.jsx, ...   (this folder, unchanged)
-Atlas.html               (loads src/* and a thin Tauri bridge)
-```
-
-A `tauri-bridge.js` script (loaded before `src/state.jsx`) would set:
-```js
-window.AtlasStorage = {
-  async load()  { return JSON.parse(await invoke('load_graph')); },
-  async save(s) { return invoke('save_graph', { state: JSON.stringify(s) }); },
-};
-window.AtlasExecutor = {
-  async runNode(node, deps, ctx, onProgress) {
-    if (node.kind === 'cli') return invoke('run_cli', { ... });
-    if (node.kind === 'gen') return invoke('proxy_api', { ... });
-    ...
-  }
-};
-```
-
-Everything else stays the same.
-
-## Offline bundling
-
-If you need a single self-contained file (no network):
-
-1. Replace each `<script src="https://unpkg.com/...">` in `Atlas.html`
-   with a downloaded local copy (`react.development.js`,
-   `react-dom.development.js`, `babel.min.js`).
-2. The `<script type="text/babel">` references are already local.
-
-For production: precompile JSX with `npx babel src --out-dir build`
-and load the plain JS — drops Babel's runtime overhead. Not needed
-during design iteration.
-
-## Known things-to-do
-
-- Pan is implemented; zoom is not (use OS zoom for now).
-- Asset upload still uses placeholder thumbnails. The drop target is
-  there in spirit — wire it to a real `<input type="file">` when you
-  hook up Tauri's `dialog.open`.
-- The mock executor doesn't actually pipe outputs to downstream nodes.
-  When a real executor returns `thumbs`, the editor will display them
-  in the node body via `runResults`.
-- Backspace inside a text input correctly *does not* delete the node —
-  it edits text. Make sure focus is on the canvas (Esc) before pressing
-  Delete to remove a node.
-
-## Aesthetic notes
-
-- Inter for UI · JetBrains Mono for everything technical (seeds,
-  commands, port labels, prompt text). The mono is load-bearing — it
-  signals "this is data, not chrome".
-- One accent color (cool blue `#7fc8ff`). Amber for in-progress, green
-  for complete, soft red for errors. No gradients except the app mark.
-- Ports are typed and colored: image · video · text · file · number ·
-  asset. Connections inherit their source port's color.
-- Nodes are always 8px-radius cards on a 24px dot grid background.
+顶部菜单 `+` → **Export** 可将单个项目导出为 `.atlas.json` 文件，随时可重新导入。
