@@ -4,6 +4,17 @@ src-tauri/target/
 # Runtime outputs (generated media files)
 outputs/
 
+# Auto-synced from src/ by dev.command and beforeBuildCommand — do not commit
+web/src/
+
+# Claude Code local config (contains machine-specific paths)
+.claude/
+
+# Media files
+ffmpeg/*.mp4
+ffmpeg/*.mov
+ffmpeg/*.webm
+
 # macOS
 .DS_Store
 **/.DS_Store
