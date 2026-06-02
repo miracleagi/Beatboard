@@ -46,7 +46,8 @@
       "macOS": {
         "frameworks": [],
         "exceptionDomain": "",
-        "signingIdentity": "-",
+        "signingIdentity": "Developer ID Application: Zheng Chuanchuan (35NCMHD8DT)",
+        "minimumSystemVersion": "12.0",
         "entitlements": null
       }
     },
