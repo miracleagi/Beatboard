@@ -13,12 +13,12 @@ A node-graph editor for chaining AI image and video generation into visual workf
 Run the setup script to automatically install Node.js, ffmpeg, the PixVerse CLI, and log in to your PixVerse account:
 
 ```bash
-bash 安装PixVerse.sh
+bash Install-PixVerse.sh
 ```
 
 > If you see "operation not permitted", grant execute permission first:
 > ```bash
-> chmod +x 安装PixVerse.sh && ./安装PixVerse.sh
+> chmod +x Install-PixVerse.sh && ./Install-PixVerse.sh
 > ```
 
 The script may prompt for your macOS password (required by Homebrew).
@@ -101,7 +101,7 @@ Library items can be reused across projects — drag them onto the canvas or pic
 
 ```
 Atlas.app                    ← Desktop app (Tauri bundle)
-安装PixVerse.sh              ← One-click dependency installer
+Install-PixVerse.sh              ← One-click dependency installer
 dev.command                  ← Development mode launcher (requires Rust)
 src/                         ← Frontend source (JSX, no build step needed)
   shared.jsx                 ← Design tokens, icons, shared components

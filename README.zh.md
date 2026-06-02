@@ -16,12 +16,12 @@
 - 引导完成 PixVerse 账号登录
 
 ```bash
-bash 安装PixVerse.sh
+bash Install-PixVerse.sh
 ```
 
 > 如果提示"operation not permitted"，请先给脚本赋权：
 > ```bash
-> chmod +x 安装PixVerse.sh && ./安装PixVerse.sh
+> chmod +x Install-PixVerse.sh && ./Install-PixVerse.sh
 > ```
 
 安装过程中系统可能弹出密码框，输入 Mac 登录密码即可（Homebrew 安装需要）。
@@ -104,7 +104,7 @@ Library 中的素材可以跨项目复用，直接拖到画布上或在 Asset �
 
 ```
 Atlas.app                    ← 桌面应用（Tauri 打包）
-安装PixVerse.sh              ← 一键安装依赖脚本
+Install-PixVerse.sh              ← 一键安装依赖脚本
 dev.command                  ← 开发模式启动（需要 Rust 环境）
 src/                         ← 前端源码（JSX，不需要编译步骤）
   shared.jsx                 ← 设计 token、图标、通用组件
