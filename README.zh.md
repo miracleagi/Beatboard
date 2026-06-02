@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="100" height="100" alt="Atlas logo"/>
+</p>
+
 # Atlas — AI 媒体节点编辑器
 
 用节点图的方式串联 AI 图像 / 视频生成工作流。基于 Tauri + React 构建的 macOS 桌面应用，使用 PixVerse CLI 在本地直接调用 AI 生成能力。

@@ -1,0 +1,55 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="256" height="256" rx="56" fill="#13151a"/>
+
+  <!-- Dot grid -->
+  <pattern id="grid" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+    <circle cx="1" cy="1" r="1.2" fill="#7fc8ff" opacity="0.07"/>
+  </pattern>
+  <rect width="256" height="256" rx="56" fill="url(#grid)"/>
+
+  <!-- Connection: node1 → center -->
+  <line x1="88" y1="90" x2="130" y2="128" stroke="#7fc8ff" stroke-width="2" stroke-linecap="round" opacity="0.45"/>
+  <!-- Connection: node2 → center -->
+  <line x1="88" y1="166" x2="130" y2="128" stroke="#7fc8ff" stroke-width="2" stroke-linecap="round" opacity="0.45"/>
+  <!-- Connection: center → output (glow) -->
+  <line x1="152" y1="128" x2="184" y2="128" stroke="#7fc8ff" stroke-width="8" stroke-linecap="round" opacity="0.12"/>
+  <line x1="152" y1="128" x2="184" y2="128" stroke="#7fc8ff" stroke-width="2.5" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Input node 1 -->
+  <circle cx="88" cy="90" r="18" fill="#1b1e27" stroke="#7fc8ff" stroke-width="1.5" opacity="0.95"/>
+  <!-- lines inside suggesting text/prompt -->
+  <line x1="78" y1="86" x2="98" y2="86" stroke="#7fc8ff" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="78" y1="92" x2="93" y2="92" stroke="#7fc8ff" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+  <!-- right port -->
+  <circle cx="106" cy="90" r="3.5" fill="#7fc8ff" opacity="0.8"/>
+
+  <!-- Input node 2 -->
+  <circle cx="88" cy="166" r="18" fill="#1b1e27" stroke="#7fc8ff" stroke-width="1.5" opacity="0.95"/>
+  <!-- image icon inside -->
+  <rect x="79" y="158" width="18" height="16" rx="2" stroke="#7fc8ff" stroke-width="1.5" fill="none" opacity="0.5"/>
+  <circle cx="84" cy="163" r="2" fill="#7fc8ff" opacity="0.4"/>
+  <polyline points="79,172 85,166 90,170 95,164 97,174" stroke="#7fc8ff" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"/>
+  <!-- right port -->
+  <circle cx="106" cy="166" r="3.5" fill="#7fc8ff" opacity="0.8"/>
+
+  <!-- Center processing node -->
+  <rect x="112" y="110" width="40" height="36" rx="8" fill="#1b1e27" stroke="#7fc8ff" stroke-width="2"/>
+  <!-- left port -->
+  <circle cx="112" cy="128" r="3.5" fill="#7fc8ff" opacity="0.8"/>
+  <!-- right port -->
+  <circle cx="152" cy="128" r="3.5" fill="#7fc8ff" opacity="0.8"/>
+  <!-- sparkle icon -->
+  <circle cx="132" cy="128" r="5" fill="#7fc8ff" opacity="0.9"/>
+  <line x1="132" y1="118" x2="132" y2="122" stroke="#7fc8ff" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="132" y1="134" x2="132" y2="138" stroke="#7fc8ff" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="122" y1="128" x2="126" y2="128" stroke="#7fc8ff" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="138" y1="128" x2="142" y2="128" stroke="#7fc8ff" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- Output: video play node -->
+  <rect x="184" y="108" width="52" height="40" rx="9" fill="#7fc8ff"/>
+  <!-- glow behind play node -->
+  <rect x="184" y="108" width="52" height="40" rx="9" fill="#7fc8ff" opacity="0.25" transform="scale(1.08) translate(-11,-9)"/>
+  <!-- play triangle -->
+  <polygon points="200,118 200,138 218,128" fill="#13151a"/>
+</svg>

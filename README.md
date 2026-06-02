@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="100" height="100" alt="Atlas logo"/>
+</p>
+
 # Atlas — AI Media Node Editor
 
 A node-graph editor for chaining AI image and video generation into visual workflows. Built as a macOS desktop app with Tauri + React, powered by the PixVerse CLI.
