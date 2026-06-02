@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" width="100" height="100" alt="Atlas logo"/>
+  <img src="assets/logo.png" width="480" alt="Atlas logo"/>
 </p>
 
 # Atlas — AI 媒体节点编辑器
