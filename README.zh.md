@@ -2,6 +2,10 @@
 
 用节点图的方式串联 AI 图像 / 视频生成工作流。基于 Tauri + React 构建的 macOS 桌面应用，使用 PixVerse CLI 在本地直接调用 AI 生成能力。
 
+[![下载](https://img.shields.io/github/v/release/miracleagi/media_cavas?label=下载&logo=apple&style=for-the-badge)](https://github.com/miracleagi/media_cavas/releases/latest/download/Atlas_0.9.0_aarch64.dmg)
+[![协议: MIT NC](https://img.shields.io/badge/协议-MIT%20NC-blue?style=for-the-badge)](LICENSE)
+[![平台: macOS](https://img.shields.io/badge/平台-macOS%2012%2B-lightgrey?style=for-the-badge&logo=apple)](https://github.com/miracleagi/media_cavas/releases)
+
 ---
 
 ## Mac 安装

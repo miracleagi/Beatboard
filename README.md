@@ -4,6 +4,10 @@ A node-graph editor for chaining AI image and video generation into visual workf
 
 > 中文说明请见 [README.zh.md](README.zh.md)
 
+[![Download](https://img.shields.io/github/v/release/miracleagi/media_cavas?label=Download&logo=apple&style=for-the-badge)](https://github.com/miracleagi/media_cavas/releases/latest/download/Atlas_0.9.0_aarch64.dmg)
+[![License: MIT NC](https://img.shields.io/badge/License-MIT%20NC-blue?style=for-the-badge)](LICENSE)
+[![Platform: macOS](https://img.shields.io/badge/Platform-macOS%2012%2B-lightgrey?style=for-the-badge&logo=apple)](https://github.com/miracleagi/media_cavas/releases)
+
 ---
 
 ## Installation (macOS)
