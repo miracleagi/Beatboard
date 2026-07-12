@@ -397,6 +397,9 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
     graph, dispatch, config,
     getRunResult: (id) => project.runResults[id],
   });
+  // Expose the live runner so the MCP bridge can start runs and read
+  // per-node progress (refreshed every render, so closures stay current).
+  window.AtlasRunner = runner;
   const defaultRunOrder = React.useMemo(() => runOrderNodeIds(graph), [graph]);
   const defaultDoneCount = defaultRunOrder.filter(id => project.runResults[id]?.state === 'done').length;
 

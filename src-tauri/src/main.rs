@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ffmpeg;
+mod mcp;
 mod pixverse;
 mod storage;
 mod thumbs;
@@ -226,7 +227,11 @@ fn media_mime(path: &std::path::Path) -> &'static str {
 fn main() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("atlasmedia", media_protocol)
-        .invoke_handler(tauri::generate_handler![load_graph, save_graph, run_node, copy_to_downloads])
+        .invoke_handler(tauri::generate_handler![load_graph, save_graph, run_node, copy_to_downloads, mcp::mcp_response])
+        .setup(|app| {
+            mcp::start(app.handle());
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

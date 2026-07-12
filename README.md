@@ -98,6 +98,28 @@ Click **⚙ Config** (top right) to open the settings panel:
 
 ---
 
+## Connect an AI agent (MCP)
+
+While the app is open, Atlas runs a local [MCP](https://modelcontextprotocol.io) server, so AI coding
+agents (Claude Code, Cursor, …) can build and run media pipelines on the canvas — live, while you watch.
+
+```bash
+# Claude Code
+claude mcp add --transport http atlas http://127.0.0.1:4923/mcp
+```
+
+Then ask your agent something like *"storyboard a 30-second product teaser: generate 4 stills,
+animate each, stitch them together"* — the graph grows on the canvas in real time, and every
+agent edit is undoable with ⌘Z.
+
+**Tools exposed:** `get_graph` · `add_node` · `connect_nodes` · `set_params` · `run_node` · `get_node_result`
+
+- The server listens on `127.0.0.1:4923` (override with the `ATLAS_MCP_PORT` env var), only while Atlas is running, and never accepts remote connections.
+- Generation nodes run through your local PixVerse CLI and account — exactly as if you clicked Run.
+- **Pick** nodes pause the run for a human choice; the agent is told to wait for you.
+
+---
+
 ## Library
 
 Click the **☆** button on any completed node to save its result to the Library.  
@@ -118,10 +140,12 @@ src/                         ← Frontend source (JSX, no build step needed)
   editor-node.jsx            ← Individual node component
   editor-panels.jsx          ← Top bar, left palette, right Inspector
   editor-app.jsx             ← App root, autosave
+  mcp-bridge.jsx             ← MCP ops → live graph (agent bridge)
   graph.jsx                  ← Edge paths, ports
   scenarios.jsx              ← Project templates
 src-tauri/                   ← Rust backend
   src/main.rs                ← Tauri invoke handlers
+  src/mcp.rs                 ← MCP server (agents drive the canvas)
   src/pixverse.rs            ← PixVerse CLI argument resolution & execution
   src/ffmpeg.rs              ← ffmpeg node execution
   src/thumbs.rs              ← Result parsing & thumbnail download

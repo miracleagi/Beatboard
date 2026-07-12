@@ -101,6 +101,27 @@ bash Install-PixVerse.sh
 
 ---
 
+## 接入 AI Agent(MCP)
+
+Atlas 运行时会在本机启动一个 [MCP](https://modelcontextprotocol.io) server,
+让 AI 编程助手(Claude Code、Cursor 等)直接在画布上搭建和运行媒体管线——你可以实时看着节点图长出来。
+
+```bash
+# Claude Code
+claude mcp add --transport http atlas http://127.0.0.1:4923/mcp
+```
+
+然后对 agent 说类似 *"做一个 30 秒产品预告片的分镜:生成 4 张静帧,逐张转成动画,最后拼接成片"*——
+节点图会实时出现在画布上,agent 的每一步操作都可以用 ⌘Z 撤销。
+
+**暴露的工具:** `get_graph` · `add_node` · `connect_nodes` · `set_params` · `run_node` · `get_node_result`
+
+- Server 监听 `127.0.0.1:4923`(可用环境变量 `ATLAS_MCP_PORT` 修改),仅在 Atlas 运行期间存在,不接受远程连接
+- 生成节点通过你本机的 PixVerse CLI 和账号执行,和手动点 Run 完全一致
+- **Pick** 节点会暂停运行等人工挑选,agent 会被告知等待你的选择
+
+---
+
 ## Library
 
 运行结果可以点击节点上的 **☆ 收藏** 按钮保存到 Library。  
@@ -121,10 +142,12 @@ src/                         ← 前端源码（JSX，不需要编译步骤）
   editor-node.jsx            ← 单个节点组件
   editor-panels.jsx          ← 顶栏、左侧面板、右侧 Inspector
   editor-app.jsx             ← 应用根组件、自动保存
+  mcp-bridge.jsx             ← MCP 操作 → 实时图状态(agent 桥)
   graph.jsx                  ← 连线路径、端口
   scenarios.jsx              ← 项目模板
 src-tauri/                   ← Rust 后端
   src/main.rs                ← Tauri invoke 处理器
+  src/mcp.rs                 ← MCP server(agent 驱动画布)
   src/pixverse.rs            ← PixVerse CLI 参数解析与执行
   src/ffmpeg.rs              ← ffmpeg 节点执行
   src/thumbs.rs              ← 运行结果解析与缩略图下载

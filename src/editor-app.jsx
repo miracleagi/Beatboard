@@ -38,6 +38,10 @@ function App() {
     dispatch(action);
   };
 
+  // MCP bridge: lets AI agents (Claude Code, Cursor, …) drive this same
+  // reducer through the Rust-side MCP server. Agent edits are undoable.
+  useMcpBridge({ stateRef, dispatch: dispatchWithHistory });
+
   // ── Storage hydration ────────────────────────────────────────────────────────
   const storageReadyRef = React.useRef(false);
   React.useEffect(() => {
