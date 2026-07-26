@@ -1,5 +1,7 @@
 # Rust / Tauri build output
 src-tauri/target/
+src-tauri/binaries/*-apple-darwin
+src-tauri/runtime/pixverse-package/node_modules/
 
 # Runtime outputs (generated media files)
 outputs/

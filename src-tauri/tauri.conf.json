@@ -1,13 +1,13 @@
 {
   "build": {
     "beforeDevCommand": "",
-    "beforeBuildCommand": "rm -rf .atlas-runs && rm -rf web/src && cp -r src web/src",
+    "beforeBuildCommand": "rm -rf .beatboard-runs && rm -rf web/src && cp -r src web/src",
     "devPath": "../web",
     "distDir": "../web",
     "withGlobalTauri": true
   },
   "package": {
-    "productName": "Atlas",
+    "productName": "Beatboard",
     "version": "0.9.0"
   },
   "tauri": {
@@ -33,16 +33,20 @@
     "bundle": {
       "active": true,
       "targets": ["dmg", "app"],
-      "identifier": "com.atlas.pipeline",
+      "identifier": "com.beatboard.app",
       "icon": [
         "icons/icon.png",
         "icons/icon.icns"
       ],
-      "resources": [],
-      "externalBin": [],
+      "resources": [
+        "runtime/pixverse-package/package.json",
+        "runtime/pixverse-package/package-lock.json",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "externalBin": ["binaries/ffmpeg"],
       "copyright": "",
       "category": "Productivity",
-      "shortDescription": "Local AI media pipeline editor",
+      "shortDescription": "Beat-level AI media canvas",
       "macOS": {
         "frameworks": [],
         "exceptionDomain": "",
@@ -61,7 +65,7 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "title": "Atlas",
+        "title": "Beatboard",
         "width": 1440,
         "height": 900,
         "minWidth": 900,

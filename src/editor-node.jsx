@@ -16,7 +16,11 @@ function _isPixVerseCli(node) {
   return raw.split(/\s+/)[0].split(/[\\/]/).pop() === 'pixverse';
 }
 function _pvMode(node) {
-  return (node?.cli?.args || []).includes('video') ? 'video' : 'image';
+  const sub = (node?.cli?.args || [])[1] || 'image';
+  if (sub === 'voice' || sub === 'music') return 'audio';
+  if (sub === 'image') return 'image';
+  if (sub === 'template') return 'asset';
+  return 'video';
 }
 
 function EditableText({ value, onChange, placeholder, style, mono, mult, minRows = 1, maxRows }) {
@@ -73,6 +77,8 @@ function mediaSrc(thumb) {
     thumb?.imageUrl ||
     thumb?.video_url ||
     thumb?.videoUrl ||
+    thumb?.audio_url ||
+    thumb?.audioUrl ||
     thumb?.path ||
     thumb?.output ||
     thumb?.file ||
@@ -85,7 +91,7 @@ function mediaSrc(thumb) {
   // Standard protocols + local paths + Tauri asset:// and custom atlasmedia:// protocols
   if (/^(https?:|data:|blob:|\/|asset:|atlasmedia:)/i.test(s)) return s;
   // Files whose extension clearly identifies them as media
-  if (/\.(png|jpe?g|webp|gif|avif|mp4|mov|webm|m4v)(\?|$)/i.test(s)) return s;
+  if (/\.(png|jpe?g|webp|gif|avif|mp4|mov|webm|m4v|mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(s)) return s;
   return '';
 }
 
@@ -102,7 +108,12 @@ function isVideoThumb(thumb, src) {
   return thumb?.type === 'video' || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(String(value || ''));
 }
 
-function MediaLightbox({ t, src, label, isVideo, onClose }) {
+function isAudioThumb(thumb, src) {
+  const value = src || thumb?.audio_url || thumb?.audioUrl || thumb?.url || thumb?.path || thumb?.output || thumb?.file || '';
+  return thumb?.type === 'audio' || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(String(value || ''));
+}
+
+function MediaLightbox({ t, src, label, isVideo, isAudio, onClose }) {
   React.useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') onClose();
@@ -141,7 +152,12 @@ function MediaLightbox({ t, src, label, isVideo, onClose }) {
           justifyContent: 'center',
         }}
       >
-        {isVideo ? (
+        {isAudio ? (
+          <div style={{ width: 'min(82vw, 720px)', padding: 24, borderRadius: 8, background: t.panel, boxShadow: '0 24px 80px rgba(0,0,0,0.65)' }}>
+            <div style={{ marginBottom: 12, color: t.text, fontFamily: FONT_MONO, fontSize: 12 }}>{label || 'generated audio'}</div>
+            <audio src={src} controls autoPlay style={{ width: '100%' }}/>
+          </div>
+        ) : isVideo ? (
           <video
             src={src}
             controls
@@ -229,6 +245,7 @@ function MediaThumb({ t, thumb, h, selected, onClick, fallbackLabel, previewable
   }
   const label = thumb?.label || thumb?.id || fallbackLabel || '';
   const isVideo = isVideoThumb(thumb, src);
+  const isAudio = isAudioThumb(thumb, src);
   return (
     <>
       <div
@@ -252,7 +269,11 @@ function MediaThumb({ t, thumb, h, selected, onClick, fallbackLabel, previewable
           cursor: hasSelectionAction ? 'pointer' : (canPreview ? 'zoom-in' : 'default'),
         }}
       >
-        {isVideo ? (
+        {isAudio ? (
+          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', padding: '0 8px', boxSizing: 'border-box', background: t.panel }}>
+            <audio src={src} controls preload="metadata" style={{ width: '100%' }} onError={() => setFailed(true)}/>
+          </div>
+        ) : isVideo ? (
           <video
             src={src}
             muted
@@ -320,9 +341,10 @@ function MediaThumb({ t, thumb, h, selected, onClick, fallbackLabel, previewable
           <MediaLightbox
             t={t}
             src={src}
-            label={label || src}
-            isVideo={isVideo}
-            onClose={() => setOpen(false)}
+          label={label || src}
+          isVideo={isVideo}
+          isAudio={isAudio}
+          onClose={() => setOpen(false)}
           />,
           document.body
         )
@@ -336,6 +358,7 @@ function PickCompareTile({ t, thumb, index, selected, tileHeight, onPick }) {
   const src = mediaSrc(thumb);
   const label = thumb?.label || thumb?.id || `pick ${index + 1}`;
   const isVideo = isVideoThumb(thumb, src);
+  const isAudio = isAudioThumb(thumb, src);
   return (
     <div
       role="button"
@@ -363,7 +386,11 @@ function PickCompareTile({ t, thumb, index, selected, tileHeight, onPick }) {
       }}
     >
       {src && !failed ? (
-        isVideo ? (
+        isAudio ? (
+          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', padding: 12, boxSizing: 'border-box' }}>
+            <audio src={src} controls preload="metadata" style={{ width: '100%' }} onError={() => setFailed(true)}/>
+          </div>
+        ) : isVideo ? (
           <video
             src={src}
             muted
@@ -658,17 +685,44 @@ function EditableBody({ t, node, runResult, runOverride, candidateThumbs, onPatc
     if (_isPixVerseCli(node)) {
       const args = node.cli?.args || [];
       const mode = _pvMode(node);
-      const model = _pvCliArg(args, '--model', mode === 'video' ? 'v6' : 'qwen-image');
-      const quality = _pvCliArg(args, '--quality', mode === 'video' ? '720p' : '1080p');
+      const sub = args[1] || 'image';
+      const defaultModel = sub === 'image' ? 'gpt-image-2.0'
+        : sub === 'modify' ? 'v5.5'
+        : sub === 'voice' ? 'speech-2.8-hd'
+        : sub === 'music' ? 'music-2.6'
+        : 'v6';
+      const model = _pvCliArg(args, '--model', defaultModel);
+      const quality = _pvCliArg(args, '--quality', mode === 'image' ? '1080p' : '720p');
       const ratio = _pvCliArg(args, '--aspect-ratio', '16:9');
       const duration = mode === 'video' ? _pvCliArg(args, '--duration', '5') : null;
       const count = _pvCliArg(args, '--count', '1');
-      const fields = [
-        { k: 'model', v: model },
-        { k: 'quality', v: quality },
-        { k: 'ratio', v: ratio },
-        duration != null ? { k: 'dur', v: `${duration}s` } : { k: 'count', v: `${count}×` },
-      ];
+      const fields = mode === 'audio'
+        ? sub === 'music'
+          ? [
+              { k: 'model', v: model },
+              { k: 'duration', v: `${_pvCliArg(args, '--duration-seconds', '60')}s` },
+              { k: 'lyrics', v: args.includes('--instrumental') ? 'instrumental' : args.includes('--auto-lyrics') ? 'auto' : 'custom' },
+              { k: 'output', v: 'audio' },
+            ]
+          : [
+              { k: 'model', v: model },
+              { k: 'language', v: _pvCliArg(args, '--language', 'auto') },
+              { k: 'speed', v: `${_pvCliArg(args, '--speed', '1')}×` },
+              { k: 'output', v: 'audio' },
+            ]
+        : mode === 'asset'
+          ? [
+              { k: 'template', v: _pvCliArg(args, '--template-id', 'required') },
+              { k: 'quality', v: quality },
+              { k: 'ratio', v: ratio },
+              { k: 'count', v: `${count}×` },
+            ]
+          : [
+              { k: 'model', v: model },
+              { k: 'quality', v: quality },
+              { k: 'ratio', v: ratio },
+              duration != null ? { k: 'dur', v: `${duration}s` } : { k: 'count', v: `${count}×` },
+            ];
       // model gets its own full-width row; quality / ratio / dur share the second row
       const paramFields = fields.slice(1); // quality, ratio, dur/count
       // Thumbnails from run result (prefer runOverride during live run)
@@ -882,6 +936,7 @@ function EditorNode({
   runOverride,                 // { state, progress } from current run
   runResult,                   // persisted result (for previews)
   candidateThumbs,             // live upstream thumbs for Pick nodes
+  inputReadiness,              // input-port status map from required solid edges
   statusStyle = 'border',
   onMouseDown,                 // start node drag
   onPortMouseDown,             // start connection drag
@@ -899,7 +954,9 @@ function EditorNode({
   const state = runOverride?.state || node.state || 'idle';
   const progress = runOverride?.progress ?? node.progress ?? 0;
   const isRunning = state === 'running';
-  const isError = state === 'error';
+  const isBlocked = state === 'blocked';
+  const isWaiting = state === 'waiting_dependencies' || state === 'waiting_user';
+  const isError = state === 'error' || isBlocked;
   const isDone = state === 'done';
 
   let borderColor = t.border;
@@ -907,6 +964,7 @@ function EditorNode({
   else if (statusStyle === 'border') {
     if (isError) borderColor = t.red;
     else if (isRunning) borderColor = t.amber;
+    else if (isWaiting) borderColor = t.amber;
     else if (isDone) borderColor = t.green;
     else if (state === 'queued') borderColor = t.textMute;
   }
@@ -973,6 +1031,9 @@ function EditorNode({
         {state === 'running' && (
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: t.amber }} className="mg-pulse"/>
         )}
+        {isWaiting && (
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: t.amber }} className="mg-pulse"/>
+        )}
         {state === 'done' && (<Icon name="check" size={11} color={t.green}/>)}
         {isError && (<Icon name="close" size={11} color={t.red}/>)}
       </div>
@@ -994,13 +1055,16 @@ function EditorNode({
         }}>
           <span style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.35 }}>{node.footer.left}</span>
           <span style={{
-            color: state === 'running' ? t.amber : state === 'done' ? t.green : isError ? t.red : t.textMute,
+            color: state === 'running' || isWaiting ? t.amber : state === 'done' ? t.green : isError ? t.red : t.textMute,
             whiteSpace: 'nowrap',
             justifySelf: 'end',
           }}>
             {isRunning ? `${Math.round(progress * 100)}%` :
+             isBlocked ? 'blocked' :
              isError ? 'error' :
              isDone ? 'done' :
+             state === 'waiting_dependencies' ? 'waiting inputs' :
+             state === 'waiting_user' ? 'waiting pick' :
              state === 'queued' ? 'queued' :
              node.footer.right}
           </span>
@@ -1008,8 +1072,16 @@ function EditorNode({
       )}
 
       {/* Visual ports (decorative — actual hit targets are added by EditorCanvas) */}
-      {(node.ports || []).map((p, i) => (
+      {(node.ports || []).map((p, i) => {
+        const readiness = p.side === 'left' ? inputReadiness?.[i] : null;
+        const readinessColor = readiness?.state === 'ready' ? t.green
+          : readiness?.state === 'waiting' ? t.amber
+          : readiness?.state === 'blocked' ? t.red
+          : t.textMute;
+        const readinessLabel = readiness?.state === 'unconnected' ? 'open' : readiness?.state;
+        return (
         <div key={i}
+          title={readinessLabel ? `${p.label || p.kind}: ${readinessLabel}` : (p.label || p.kind)}
           onMouseDown={(e) => { e.stopPropagation(); onPortMouseDown && onPortMouseDown(node.id, i, e); }}
           style={{
             position: 'absolute',
@@ -1025,7 +1097,9 @@ function EditorNode({
             width: 10, height: 10, borderRadius: '50%',
             background: PORT_COLORS[p.kind],
             border: `2px solid ${t.bg}`,
-            boxShadow: `0 0 0 1px ${PORT_COLORS[p.kind]}`,
+            boxShadow: readiness
+              ? `0 0 0 1px ${readinessColor}, 0 0 0 3px ${readinessColor}33`
+              : `0 0 0 1px ${PORT_COLORS[p.kind]}`,
             margin: 3,
           }}/>
           {p.label && (
@@ -1036,10 +1110,13 @@ function EditorNode({
               fontFamily: FONT_MONO, fontSize: 9, color: t.textMute,
               letterSpacing: 0.3, whiteSpace: 'nowrap',
               pointerEvents: 'none',
-            }}>{p.label}</div>
+            }}>
+              {p.label}
+              {readinessLabel && <span style={{ color: readinessColor }}> · {readinessLabel}</span>}
+            </div>
           )}
         </div>
-      ))}
+      )})}
 
       {/* Selected → hover-style action chip stack on the right */}
       {selected && (

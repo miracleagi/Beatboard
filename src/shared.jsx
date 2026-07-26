@@ -294,7 +294,7 @@ function AppHeader({ theme = 'dark', tabs, activeTab, onTabClick }) {
         padding: '0 14px', borderRight: `1px solid ${t.border}`,
       }}>
         <AtlasLogo size={18} t={t}/>
-        <span style={{ color: t.text, fontSize: 12, fontWeight: 600, letterSpacing: -0.1 }}>Atlas</span>
+        <span style={{ color: t.text, fontSize: 12, fontWeight: 600, letterSpacing: -0.1 }}>Beatboard</span>
         <span style={{ color: t.textMute, fontFamily: FONT_MONO, fontSize: 9, marginLeft: 'auto' }}>v0.4</span>
       </div>
 

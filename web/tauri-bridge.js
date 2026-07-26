@@ -1,6 +1,6 @@
 /**
  * tauri-bridge.js
- * Replaces atlas-bridge.js when running inside the Tauri desktop app.
+ * Replaces browser-bridge.js when running inside the Tauri desktop app.
  * Sets window.AtlasStorage (filesystem) and window.AtlasExecutor (Rust backend).
  */
 (function () {
@@ -18,7 +18,7 @@
         const raw = await invoke('load_graph');
         return raw ? localizeSavedState(JSON.parse(raw)) : null;
       } catch (e) {
-        console.warn('[Atlas] storage load failed', e);
+        console.warn('[Beatboard] storage load failed', e);
         return null;
       }
     },
@@ -28,7 +28,7 @@
         const { ui, ...rest } = state;
         await invoke('save_graph', { state: JSON.stringify(rest) });
       } catch (e) {
-        console.warn('[Atlas] storage save failed', e);
+        console.warn('[Beatboard] storage save failed', e);
       }
     },
   };
@@ -66,18 +66,24 @@
       thumb.videoUrl,
       thumb.image_url,
       thumb.imageUrl,
+      thumb.audio_url,
+      thumb.audioUrl,
       thumb.src,
     ];
     const mediaUrlPath = values.map(pathFromLocalMediaUrl).find(Boolean);
     if (mediaUrlPath) return mediaUrlPath;
     return String(values.find(value => {
       const s = String(value || '').trim();
-      return s && !isRemoteLike(s) && (s.startsWith('/') || /\.(png|jpe?g|webp|gif|avif|mp4|mov|webm|m4v)(\?|$)/i.test(s));
+      return s && !isRemoteLike(s) && (s.startsWith('/') || /\.(png|jpe?g|webp|gif|avif|mp4|mov|webm|m4v|mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(s));
     }) || '');
   }
 
   function isVideoPath(value, thumb) {
     return thumb?.type === 'video' || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(String(value || ''));
+  }
+
+  function isAudioPath(value, thumb) {
+    return thumb?.type === 'audio' || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(String(value || ''));
   }
 
   function mediaFileSrc(localPath, thumb) {
@@ -141,7 +147,7 @@
   }
 
   // ── Mock executor (for non-CLI nodes: prompt, gen, select, output…) ───────
-  // Copied from atlas-bridge.js so non-PixVerse / non-ffmpeg nodes still animate.
+  // Copied from browser-bridge.js so non-PixVerse / non-ffmpeg nodes still animate.
 
   function isAborted(ctx) {
     return !!(ctx && (ctx.aborted || ctx.abortRef?.current?.aborted));
@@ -179,10 +185,13 @@
     if (!result) return [];
     if (Array.isArray(result.thumbs)) return result.thumbs;
     const url = result.image_url || result.imageUrl || result.video_url || result.videoUrl ||
+      result.audio_url || result.audioUrl ||
       result.url || result.src || result.path || result.output || result.file ||
       result.file_path || result.filePath || result.local_path || result.localPath;
     const isVideo = !!(result.video_url || result.videoUrl) || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(String(url || ''));
-    return url ? [{ seed: url, url, label: isVideo ? 'video' : 'image', type: isVideo ? 'video' : 'image' }] : [];
+    const isAudio = !!(result.audio_url || result.audioUrl) || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(String(url || ''));
+    const type = isAudio ? 'audio' : isVideo ? 'video' : 'image';
+    return url ? [{ seed: url, url, label: type, type }] : [];
   }
 
   function sourceThumbs(dep) {
@@ -295,22 +304,23 @@
   window.AtlasDownloadOutputFile = downloadOutputFile;
 
   // ── Local media file picker ───────────────────────────────────────────────
-  // Opens a native OS file-open dialog filtered to image + video types.
+  // Opens a native OS file-open dialog filtered to image, video, and audio.
   // Returns { path, url, label, type } on success, or null if cancelled.
   async function chooseLocalFile() {
     const { open } = window.__TAURI__.dialog;
     const filePath = await open({
       multiple: false,
       filters: [{
-        name: 'Images & Videos',
-        extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'mp4', 'mov', 'webm', 'm4v'],
+        name: 'Images, Videos & Audio',
+        extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'mp4', 'mov', 'webm', 'm4v', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'],
       }],
     });
     if (!filePath) return null;
     const isVideo = /\.(mp4|mov|webm|m4v)$/i.test(filePath);
+    const isAudio = /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(filePath);
     const label = filePath.split('/').pop();
     const url = mediaFileSrc(filePath);
-    return { path: filePath, url, label, type: isVideo ? 'video' : 'image', seed: filePath };
+    return { path: filePath, url, label, type: isAudio ? 'audio' : isVideo ? 'video' : 'image', seed: filePath };
   }
   window.AtlasChooseLocalFile = chooseLocalFile;
 

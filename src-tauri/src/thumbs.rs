@@ -1,12 +1,11 @@
 // Thumb extraction: parse JSON output from PixVerse and collect media URLs/paths/IDs.
 
-use crate::utils::npm_augmented_path;
+use crate::runtime::RuntimeCommand;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::path::Path;
 use std::process::Stdio;
-use tokio::process::Command;
 
 // ─── Data type ───────────────────────────────────────────────────────────────
 
@@ -46,6 +45,16 @@ fn has_image_ext(s: &str) -> bool {
         || s.ends_with(".avif")
 }
 
+fn has_audio_ext(s: &str) -> bool {
+    let s = s.split('?').next().unwrap_or(s).to_lowercase();
+    s.ends_with(".mp3")
+        || s.ends_with(".wav")
+        || s.ends_with(".m4a")
+        || s.ends_with(".aac")
+        || s.ends_with(".ogg")
+        || s.ends_with(".flac")
+}
+
 // ─── JSON parsing ─────────────────────────────────────────────────────────────
 
 /// Try to parse `stdout` as JSON. Falls back to extracting the first `{…}` substring.
@@ -65,12 +74,77 @@ pub fn parse_json_output(stdout: &str) -> Option<Value> {
     None
 }
 
+/// Infer a generated media kind from explicit response metadata, media URL
+/// keys, or file extensions. PixVerse templates are polymorphic, so their
+/// output cannot be classified from the create subcommand alone.
+pub fn infer_media_kind(parsed: Option<&Value>) -> Option<&'static str> {
+    fn from_string(value: &str) -> Option<&'static str> {
+        let value = value.trim().to_lowercase();
+        match value.as_str() {
+            "audio" | "music" | "voice" => Some("audio"),
+            "video" => Some("video"),
+            "image" | "photo" => Some("image"),
+            _ if has_audio_ext(&value) => Some("audio"),
+            _ if has_video_ext(&value) => Some("video"),
+            _ if has_image_ext(&value) => Some("image"),
+            _ => None,
+        }
+    }
+
+    fn update(best: &mut Option<(u8, &'static str)>, score: u8, kind: &'static str) {
+        if best.is_none_or(|(current, _)| score > current) {
+            *best = Some((score, kind));
+        }
+    }
+
+    fn walk(value: &Value, best: &mut Option<(u8, &'static str)>) {
+        match value {
+            Value::String(value) => {
+                if let Some(kind) = from_string(value) {
+                    update(best, 1, kind);
+                }
+            }
+            Value::Array(values) => values.iter().for_each(|value| walk(value, best)),
+            Value::Object(map) => {
+                for key in ["media_type", "mediaType", "asset_type", "assetType", "type"] {
+                    if let Some(Value::String(value)) = map.get(key) {
+                        if let Some(kind) = from_string(value) {
+                            update(best, 4, kind);
+                        }
+                    }
+                }
+                for (kind, keys) in [
+                    ("audio", &["audio_url", "audioUrl"][..]),
+                    ("video", &["video_url", "videoUrl"][..]),
+                    ("image", &["image_url", "imageUrl"][..]),
+                ] {
+                    if keys.iter().any(|key| {
+                        map.get(*key)
+                            .and_then(Value::as_str)
+                            .is_some_and(|value| !value.trim().is_empty())
+                    }) {
+                        update(best, 3, kind);
+                    }
+                }
+                map.values().for_each(|value| walk(value, best));
+            }
+            _ => {}
+        }
+    }
+
+    let mut best = None;
+    if let Some(parsed) = parsed {
+        walk(parsed, &mut best);
+    }
+    best.map(|(_, kind)| kind)
+}
+
 // ─── Thumb collection ────────────────────────────────────────────────────────
 
 /// Walk a parsed JSON value and collect media candidates.
 /// Prefers url/path candidates; falls back to id-only if none found.
 /// When a URL thumb is found, the first available ID from the same parse
-/// is also stored so callers can use the cloud video_id (e.g. for extend/upscale/speech).
+/// is also stored so callers can use the cloud asset ID in downstream nodes.
 pub fn collect_thumbs(parsed: Option<&Value>, mode: &str) -> Vec<Thumb> {
     let mut candidates: Vec<(String, String)> = Vec::new(); // (kind, value)
     let mut seen = HashSet::new();
@@ -88,7 +162,7 @@ pub fn collect_thumbs(parsed: Option<&Value>, mode: &str) -> Vec<Thumb> {
     };
     // Collect all IDs found so we can attach the first one to every URL thumb.
     // This ensures that after `create video`, the thumb carries both the CDN
-    // URL *and* the numeric cloud video_id needed by extend/upscale/speech.
+    // URL *and* the numeric cloud asset ID needed by downstream operations.
     let first_id: Option<String> = candidates
         .iter()
         .find(|(k, _)| k == "id")
@@ -102,7 +176,11 @@ pub fn collect_thumbs(parsed: Option<&Value>, mode: &str) -> Vec<Thumb> {
             label: mode.to_string(),
             thumb_type: mode.to_string(),
             chosen: i == 0,
-            url: if kind == "url" { Some(value.clone()) } else { None },
+            url: if kind == "url" {
+                Some(value.clone())
+            } else {
+                None
+            },
             path: if kind == "path" && !is_remote_url(value) {
                 Some(value.clone())
             } else {
@@ -126,20 +204,67 @@ fn collect_candidates(
     seen: &mut HashSet<String>,
 ) {
     let is_video = mode == "video";
-    let url_keys: &[&str] = if is_video {
-        &["video_url", "videoUrl", "media_url", "mediaUrl", "download_url", "downloadUrl", "url", "src"]
+    let is_audio = mode == "audio";
+    let url_keys: &[&str] = if is_audio {
+        &[
+            "audio_url",
+            "audioUrl",
+            "media_url",
+            "mediaUrl",
+            "download_url",
+            "downloadUrl",
+            "url",
+            "src",
+        ]
+    } else if is_video {
+        &[
+            "video_url",
+            "videoUrl",
+            "media_url",
+            "mediaUrl",
+            "download_url",
+            "downloadUrl",
+            "url",
+            "src",
+        ]
     } else {
-        &["image_url", "imageUrl", "media_url", "mediaUrl", "download_url", "downloadUrl", "url", "src"]
+        &[
+            "image_url",
+            "imageUrl",
+            "media_url",
+            "mediaUrl",
+            "download_url",
+            "downloadUrl",
+            "url",
+            "src",
+        ]
     };
-    let path_keys: &[&str] =
-        &["path", "output", "file", "file_path", "filePath", "local_path", "localPath"];
-    let id_keys: &[&str] = if is_video {
-        &["video_id", "videoId", "asset_id", "assetId", "id", "task_id", "taskId"]
+    let path_keys: &[&str] = &[
+        "path",
+        "output",
+        "file",
+        "file_path",
+        "filePath",
+        "local_path",
+        "localPath",
+    ];
+    let id_keys: &[&str] = if is_audio {
+        &[
+            "audio_id", "audioId", "asset_id", "assetId", "id", "task_id", "taskId",
+        ]
+    } else if is_video {
+        &[
+            "video_id", "videoId", "asset_id", "assetId", "id", "task_id", "taskId",
+        ]
     } else {
-        &["image_id", "imageId", "asset_id", "assetId", "id", "task_id", "taskId"]
+        &[
+            "image_id", "imageId", "asset_id", "assetId", "id", "task_id", "taskId",
+        ]
     };
-    let recurse: &[&str] =
-        &["videos", "images", "assets", "items", "outputs", "records", "thumbs", "result", "data", "pixverse"];
+    let recurse: &[&str] = &[
+        "videos", "images", "audios", "assets", "items", "outputs", "records", "thumbs", "result",
+        "data", "pixverse",
+    ];
 
     match v {
         Value::String(s) => {
@@ -147,7 +272,8 @@ fn collect_candidates(
             if !s.is_empty()
                 && (is_remote_url(s)
                     || (is_video && has_video_ext(s))
-                    || (!is_video && has_image_ext(s)))
+                    || (is_audio && has_audio_ext(s))
+                    || (!is_video && !is_audio && has_image_ext(s)))
             {
                 let key = format!("url:{s}");
                 if seen.insert(key) {
@@ -218,7 +344,11 @@ async fn download_remote_url(url: &str, dir: &Path, mode: &str) -> Result<String
         .filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
         .take(80)
         .collect();
-    let default_ext = if mode == "video" { ".mp4" } else { ".jpg" };
+    let default_ext = match mode {
+        "video" => ".mp4",
+        "audio" => ".mp3",
+        _ => ".jpg",
+    };
     let filename = if safe_name.contains('.') {
         format!("{mode}-{safe_name}")
     } else {
@@ -228,7 +358,10 @@ async fn download_remote_url(url: &str, dir: &Path, mode: &str) -> Result<String
 
     // Cache: if file already exists and is non-empty, reuse it
     if out_path.exists() && out_path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
-        return out_path.to_str().map(String::from).ok_or_else(|| "bad path".to_string());
+        return out_path
+            .to_str()
+            .map(String::from)
+            .ok_or_else(|| "bad path".to_string());
     }
 
     let response = reqwest::get(url)
@@ -239,7 +372,10 @@ async fn download_remote_url(url: &str, dir: &Path, mode: &str) -> Result<String
     }
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
     std::fs::write(&out_path, &bytes).map_err(|e| e.to_string())?;
-    out_path.to_str().map(String::from).ok_or_else(|| "bad path".to_string())
+    out_path
+        .to_str()
+        .map(String::from)
+        .ok_or_else(|| "bad path".to_string())
 }
 
 /// For each thumb:
@@ -247,7 +383,7 @@ async fn download_remote_url(url: &str, dir: &Path, mode: &str) -> Result<String
 ///   ② If it has only an `id` (no url/path) → call `pixverse asset download` via CLI.
 ///   ③ Otherwise pass through unchanged.
 pub async fn resolve_asset_thumbs(
-    bin: &str,
+    runtime: &RuntimeCommand,
     thumbs: Vec<Thumb>,
     mode: &str,
     dir: &Path,
@@ -260,7 +396,10 @@ pub async fn resolve_asset_thumbs(
                 if url.starts_with("http://") || url.starts_with("https://") {
                     match download_remote_url(url, dir, mode).await {
                         Ok(local_path) => {
-                            out.push(Thumb { path: Some(local_path), ..thumb });
+                            out.push(Thumb {
+                                path: Some(local_path),
+                                ..thumb
+                            });
                             continue;
                         }
                         Err(_) => {} // fall through: push original thumb below
@@ -272,14 +411,13 @@ pub async fn resolve_asset_thumbs(
         // ② ID-only → download via CLI
         if thumb.url.is_none() && thumb.path.is_none() {
             if let Some(id) = thumb.id.as_ref().map(String::clone) {
-                let result = Command::new(bin)
-                    .env("PATH", npm_augmented_path())
-                    .args([
+                let result = runtime
+                    .command([
                         "asset",
                         "download",
                         &id,
                         "--type",
-                        if mode == "video" { "video" } else { "image" },
+                        mode,
                         "--dest",
                         dir.to_str().unwrap_or("."),
                         "--json",
@@ -310,4 +448,42 @@ pub async fn resolve_asset_thumbs(
         t.chosen = i == 0;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_thumbs, infer_media_kind};
+    use serde_json::json;
+
+    #[test]
+    fn collects_audio_url_and_cloud_id() {
+        let parsed = json!({
+            "result": {
+                "audio_url": "https://cdn.example.test/voice.mp3",
+                "audio_id": "audio-123"
+            }
+        });
+        let thumbs = collect_thumbs(Some(&parsed), "audio");
+        assert_eq!(thumbs.len(), 1);
+        assert_eq!(thumbs[0].thumb_type, "audio");
+        assert_eq!(
+            thumbs[0].url.as_deref(),
+            Some("https://cdn.example.test/voice.mp3")
+        );
+        assert_eq!(thumbs[0].id.as_deref(), Some("audio-123"));
+    }
+
+    #[test]
+    fn infers_template_result_kind_over_input_extension() {
+        let parsed = json!({
+            "input": { "url": "https://cdn.example.test/reference.jpg" },
+            "result": { "video_url": "https://cdn.example.test/effect.mp4" }
+        });
+        assert_eq!(infer_media_kind(Some(&parsed)), Some("video"));
+
+        let parsed = json!({
+            "result": { "asset_type": "image", "url": "https://cdn.example.test/effect" }
+        });
+        assert_eq!(infer_media_kind(Some(&parsed)), Some("image"));
+    }
 }

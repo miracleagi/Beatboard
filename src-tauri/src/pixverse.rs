@@ -1,12 +1,12 @@
 // PixVerse CLI execution: argument resolution and subprocess management.
 
+use crate::runtime::resolve_pixverse;
 use crate::storage::runs_dir;
-use crate::thumbs::{collect_thumbs, parse_json_output, resolve_asset_thumbs};
-use crate::utils::{expand_tilde, find_bin, npm_augmented_path, percent_decode};
+use crate::thumbs::{collect_thumbs, infer_media_kind, parse_json_output, resolve_asset_thumbs};
+use crate::utils::percent_decode;
 use serde_json::Value;
 use std::process::Stdio;
 use tauri::{AppHandle, Window};
-use tokio::process::Command;
 
 // ─── Prompt / image extraction ───────────────────────────────────────────────
 
@@ -24,7 +24,11 @@ pub fn first_prompt(node: &Value, deps: &[Value]) -> String {
             return None;
         }
         let p = from.get("prompt")?.as_str()?;
-        if p.is_empty() { None } else { Some(p.to_string()) }
+        if p.is_empty() {
+            None
+        } else {
+            Some(p.to_string())
+        }
     });
 
     let motion_prompt = node
@@ -43,51 +47,40 @@ pub fn first_prompt(node: &Value, deps: &[Value]) -> String {
 
 /// Return the first image URL or path from any upstream dep's thumbs.
 pub fn first_image_input(deps: &[Value]) -> String {
-    for dep in deps {
-        for thumbs_ptr in [
-            dep.get("result").and_then(|r| r.get("thumbs")),
-            dep.get("from").and_then(|f| f.get("thumbs")),
-        ] {
-            if let Some(thumbs) = thumbs_ptr.and_then(|t| t.as_array()) {
-                for thumb in thumbs {
-                    if let Some(p) = thumb.get("path").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-                        return p.to_string();
-                    }
-                    if let Some(p) = thumb.get("local_path").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-                        return p.to_string();
-                    }
-                    if let Some(p) = thumb.get("localPath").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-                        return p.to_string();
-                    }
-                    if let Some(u) = thumb.get("url").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-                        // Decode atlasmedia:// / asset:// back to a real local path.
-                        if u.starts_with("atlasmedia://localhost") {
-                            return percent_decode(u.trim_start_matches("atlasmedia://localhost"));
-                        }
-                        if u.starts_with("asset://localhost") {
-                            return percent_decode(u.trim_start_matches("asset://localhost"));
-                        }
-                        return u.to_string();
-                    }
-                }
-            }
-        }
-    }
-    String::new()
+    all_inputs_of_type(deps, "image")
+        .into_iter()
+        .next()
+        .unwrap_or_default()
 }
 
 /// Extract a single media path from a thumb object (shared helper).
 fn thumb_path(thumb: &Value) -> String {
-    if let Some(p) = thumb.get("path").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+    if let Some(p) = thumb
+        .get("path")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         return p.to_string();
     }
-    if let Some(p) = thumb.get("local_path").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+    if let Some(p) = thumb
+        .get("local_path")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         return p.to_string();
     }
-    if let Some(p) = thumb.get("localPath").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+    if let Some(p) = thumb
+        .get("localPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         return p.to_string();
     }
-    if let Some(u) = thumb.get("url").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+    if let Some(u) = thumb
+        .get("url")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         if u.starts_with("atlasmedia://localhost") {
             return percent_decode(u.trim_start_matches("atlasmedia://localhost"));
         }
@@ -99,13 +92,32 @@ fn thumb_path(thumb: &Value) -> String {
     String::new()
 }
 
-/// Return all media paths from deps whose thumbs have the given type ("image" or "video"),
-/// sorted by destination port index.  Used for {images} and {videos} multi-value tokens.
+fn thumb_matches_kind(thumb: &Value, kind: &str) -> bool {
+    if thumb.get("type").and_then(|v| v.as_str()) == Some(kind) {
+        return true;
+    }
+    let path = thumb_path(thumb).to_lowercase();
+    match kind {
+        "image" => [".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]
+            .iter()
+            .any(|ext| path.split('?').next().unwrap_or(&path).ends_with(ext)),
+        "video" => [".mp4", ".mov", ".webm", ".m4v"]
+            .iter()
+            .any(|ext| path.split('?').next().unwrap_or(&path).ends_with(ext)),
+        "audio" => [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"]
+            .iter()
+            .any(|ext| path.split('?').next().unwrap_or(&path).ends_with(ext)),
+        _ => false,
+    }
+}
+
+/// Return all media paths from deps whose thumbs have the given type,
+/// sorted by destination port index. Used for {images}, {videos}, and {audios}.
 fn all_inputs_of_type(deps: &[Value], kind: &str) -> Vec<String> {
-    let is_video = kind == "video";
     let mut entries: Vec<(u64, String)> = Vec::new();
     for dep in deps {
-        let port_idx = dep.get("edge")
+        let port_idx = dep
+            .get("edge")
             .and_then(|e| e.get("to"))
             .and_then(|t| t.get("port"))
             .and_then(|p| p.as_u64())
@@ -117,10 +129,7 @@ fn all_inputs_of_type(deps: &[Value], kind: &str) -> Vec<String> {
             if let Some(thumbs) = thumbs_ptr.and_then(|t| t.as_array()) {
                 let mut found = false;
                 for thumb in thumbs {
-                    // "type" is the serde rename of thumb_type
-                    let ttype = thumb.get("type").and_then(|v| v.as_str()).unwrap_or("image");
-                    let matches = if is_video { ttype == "video" } else { ttype == "image" };
-                    if matches {
+                    if thumb_matches_kind(thumb, kind) {
                         let p = thumb_path(thumb);
                         if !p.is_empty() {
                             entries.push((port_idx, p));
@@ -129,7 +138,9 @@ fn all_inputs_of_type(deps: &[Value], kind: &str) -> Vec<String> {
                         }
                     }
                 }
-                if found { break; }
+                if found {
+                    break;
+                }
             }
         }
     }
@@ -137,12 +148,27 @@ fn all_inputs_of_type(deps: &[Value], kind: &str) -> Vec<String> {
     entries.into_iter().map(|(_, path)| path).collect()
 }
 
+fn first_video_input(deps: &[Value]) -> String {
+    all_inputs_of_type(deps, "video")
+        .into_iter()
+        .next()
+        .unwrap_or_default()
+}
+
 /// Return the PixVerse cloud video/asset ID from the first upstream dep result.
 /// This is the `id` field stored on a Thumb — set from video_id / asset_id / id
-/// in the API JSON response.  Used for `--video-id` in extend/upscale/speech.
+/// in the API JSON response. Used for `--video` in extend/upscale/modify.
 /// Falls back to the local file path so the flag is never completely empty.
 fn first_video_id(deps: &[Value]) -> String {
-    for dep in deps {
+    let mut ordered: Vec<&Value> = deps.iter().collect();
+    ordered.sort_by_key(|dep| {
+        dep.get("edge")
+            .and_then(|e| e.get("to"))
+            .and_then(|t| t.get("port"))
+            .and_then(|p| p.as_u64())
+            .unwrap_or(999)
+    });
+    for dep in ordered {
         // Prefer result thumbs over node thumbs (result is from the actual run)
         for thumbs_ptr in [
             dep.get("result").and_then(|r| r.get("thumbs")),
@@ -150,13 +176,23 @@ fn first_video_id(deps: &[Value]) -> String {
         ] {
             if let Some(thumbs) = thumbs_ptr.and_then(|t| t.as_array()) {
                 for thumb in thumbs {
+                    if !thumb_matches_kind(thumb, "video") {
+                        continue;
+                    }
                     // Prefer the cloud ID field
-                    if let Some(id) = thumb.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    if let Some(id) = thumb
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                    {
                         return id.to_string();
                     }
                 }
                 // No cloud ID found in this dep; fall back to local path
                 for thumb in thumbs {
+                    if !thumb_matches_kind(thumb, "video") {
+                        continue;
+                    }
                     let p = thumb_path(thumb);
                     if !p.is_empty() {
                         return p;
@@ -173,7 +209,8 @@ fn first_video_id(deps: &[Value]) -> String {
 fn sorted_media_inputs(deps: &[Value]) -> Vec<String> {
     let mut entries: Vec<(u64, String)> = Vec::new();
     for dep in deps {
-        let port_idx = dep.get("edge")
+        let port_idx = dep
+            .get("edge")
             .and_then(|e| e.get("to"))
             .and_then(|t| t.get("port"))
             .and_then(|p| p.as_u64())
@@ -190,7 +227,11 @@ fn sorted_media_inputs(deps: &[Value]) -> Vec<String> {
                         break;
                     }
                 }
-                if entries.last().map(|(pi, _)| *pi == port_idx).unwrap_or(false) {
+                if entries
+                    .last()
+                    .map(|(pi, _)| *pi == port_idx)
+                    .unwrap_or(false)
+                {
                     break; // one path per dep
                 }
             }
@@ -215,7 +256,11 @@ pub fn resolve_pixverse_args(node: &Value, deps: &[Value]) -> Result<Vec<String>
         .get("cli")
         .and_then(|c| c.get("args"))
         .and_then(|a| a.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let prompt = first_prompt(node, deps);
@@ -223,12 +268,12 @@ pub fn resolve_pixverse_args(node: &Value, deps: &[Value]) -> Result<Vec<String>
     let video_id = first_video_id(deps);
     let sorted = sorted_media_inputs(deps);
     let from_input = sorted.first().cloned().unwrap_or_default();
-    let to_input   = sorted.get(1).cloned().unwrap_or_default();
-    // {video} = same as {image} — a file path for a video dep
-    let video_input = image.clone();
+    let to_input = sorted.get(1).cloned().unwrap_or_default();
+    let video_input = first_video_input(deps);
     // Multi-value tokens: expand to one arg per connected dep of that type
     let all_images = all_inputs_of_type(deps, "image");
     let all_videos = all_inputs_of_type(deps, "video");
+    let all_audios = all_inputs_of_type(deps, "audio");
 
     let mut out: Vec<String> = Vec::new();
     // Tracks whether {from} was just dropped so we also drop the sibling {to}
@@ -249,7 +294,11 @@ pub fn resolve_pixverse_args(node: &Value, deps: &[Value]) -> Result<Vec<String>
         // {videos} expands to N separate args (one per connected video dep).
         if arg == "{images}" {
             if all_images.is_empty() {
-                if out.last().map(|s: &String| s.starts_with("--")).unwrap_or(false) {
+                if out
+                    .last()
+                    .map(|s: &String| s.starts_with("--"))
+                    .unwrap_or(false)
+                {
                     out.pop();
                 }
             } else {
@@ -259,11 +308,29 @@ pub fn resolve_pixverse_args(node: &Value, deps: &[Value]) -> Result<Vec<String>
         }
         if arg == "{videos}" {
             if all_videos.is_empty() {
-                if out.last().map(|s: &String| s.starts_with("--")).unwrap_or(false) {
+                if out
+                    .last()
+                    .map(|s: &String| s.starts_with("--"))
+                    .unwrap_or(false)
+                {
                     out.pop();
                 }
             } else {
                 out.extend(all_videos.clone());
+            }
+            continue;
+        }
+        if arg == "{audios}" {
+            if all_audios.is_empty() {
+                if out
+                    .last()
+                    .map(|s: &String| s.starts_with("--"))
+                    .unwrap_or(false)
+                {
+                    out.pop();
+                }
+            } else {
+                out.extend(all_audios.clone());
             }
             continue;
         }
@@ -281,7 +348,11 @@ pub fn resolve_pixverse_args(node: &Value, deps: &[Value]) -> Result<Vec<String>
             if arg.contains("{from}") && from_input.is_empty() {
                 dropped_from = true;
             }
-            if out.last().map(|s: &String| s.starts_with("--")).unwrap_or(false) {
+            if out
+                .last()
+                .map(|s: &String| s.starts_with("--"))
+                .unwrap_or(false)
+            {
                 out.pop();
             }
             continue;
@@ -323,7 +394,11 @@ fn build_provider_args(node: &Value, deps: &[Value]) -> Result<Vec<String>, Stri
     let model = node
         .get("model")
         .and_then(|v| v.as_str())
-        .unwrap_or(if mode == "video" { "v6" } else { "qwen-image" });
+        .unwrap_or(if mode == "video" {
+            "v6"
+        } else {
+            "gpt-image-2.0"
+        });
     args.extend_from_slice(&["--model".to_string(), model.to_string()]);
 
     let quality = node
@@ -348,7 +423,11 @@ fn build_provider_args(node: &Value, deps: &[Value]) -> Result<Vec<String>, Stri
         if node.get("audio").and_then(|v| v.as_bool()).unwrap_or(false) {
             args.push("--audio".to_string());
         }
-        if node.get("offPeak").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if node
+            .get("offPeak")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             args.push("--off-peak".to_string());
         }
         let timeout = node.get("timeout").and_then(|v| v.as_u64()).unwrap_or(600);
@@ -371,28 +450,25 @@ pub async fn run_pixverse(
     config: Value,
     run_id: String,
 ) -> Result<Value, String> {
-    let bin_raw = config
-        .get("binPaths")
-        .and_then(|b| b.get("pixverse"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("pixverse");
-    let bin = find_bin(&expand_tilde(bin_raw));
+    let runtime = resolve_pixverse(&app, &config);
 
     let args = resolve_pixverse_args(&node, &deps)?;
-    // Subcommands that produce video output
-    let video_subcmds = ["video", "transition", "reference", "motion-control", "extend", "upscale", "speech"];
-    let mode = if args.iter().any(|a| video_subcmds.contains(&a.as_str())) { "video" } else { "image" };
+    let subcommand = args.get(1).map(String::as_str).unwrap_or("image");
+    let default_mode = match subcommand {
+        "voice" | "music" => "audio",
+        "image" => "image",
+        _ => "video",
+    };
 
     let _ = window.emit(&format!("progress:{run_id}"), 0.05f64);
 
-    let output = Command::new(&bin)
-        .env("PATH", npm_augmented_path())
-        .args(&args)
+    let output = runtime
+        .command(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| {
-            format!("Failed to start pixverse: {e}. Is it installed? Run: npm install -g pixverse")
+            format!("Failed to start PixVerse: {e}. Install the managed runtime from Beatboard Config.")
         })?
         .wait_with_output()
         .await
@@ -408,11 +484,19 @@ pub async fn run_pixverse(
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let parsed = parse_json_output(&stdout);
+    // Templates can produce either an image or a video. Prefer the actual
+    // response metadata/URL extension so Beatboard downloads and labels it using
+    // the matching PixVerse asset type.
+    let mode = if subcommand == "template" {
+        infer_media_kind(parsed.as_ref()).unwrap_or(default_mode)
+    } else {
+        default_mode
+    };
     let raw_thumbs = collect_thumbs(parsed.as_ref(), mode);
 
     let pv_dir = runs_dir(&app)?.join("pixverse");
     std::fs::create_dir_all(&pv_dir).ok();
-    let thumbs = resolve_asset_thumbs(&bin, raw_thumbs, mode, &pv_dir).await;
+    let thumbs = resolve_asset_thumbs(&runtime, raw_thumbs, mode, &pv_dir).await;
 
     let _ = window.emit(&format!("progress:{run_id}"), 1.0f64);
 
@@ -421,4 +505,87 @@ pub async fn run_pixverse(
         "pixverse": parsed,
         "thumbs": thumbs,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_pixverse_args;
+    use serde_json::{json, Value};
+
+    fn media_dep(port: u64, kind: &str, path: &str, id: &str) -> Value {
+        json!({
+            "edge": { "to": { "port": port } },
+            "from": { "kind": "asset" },
+            "result": { "thumbs": [{ "type": kind, "path": path, "id": id }] }
+        })
+    }
+
+    fn prompt_dep(port: u64, prompt: &str) -> Value {
+        json!({
+            "edge": { "to": { "port": port } },
+            "from": { "kind": "prompt", "prompt": prompt }
+        })
+    }
+
+    fn value_after<'a>(args: &'a [String], flag: &str) -> &'a str {
+        let index = args.iter().position(|arg| arg == flag).unwrap();
+        &args[index + 1]
+    }
+
+    #[test]
+    fn resolves_reference_images_videos_and_audio() {
+        let node = json!({
+            "kind": "cli",
+            "cli": { "args": [
+                "create", "reference",
+                "--images", "{images}",
+                "--videos", "{videos}",
+                "--audios", "{audios}",
+                "--prompt", "{prompt}",
+                "--json"
+            ] }
+        });
+        let deps = vec![
+            media_dep(1, "image", "/tmp/ref.png", "img-1"),
+            media_dep(2, "video", "/tmp/ref.mp4", "vid-1"),
+            media_dep(3, "audio", "/tmp/ref.mp3", "aud-1"),
+            prompt_dep(4, "@image1 follows @audio1"),
+        ];
+
+        let args = resolve_pixverse_args(&node, &deps).unwrap();
+        assert_eq!(value_after(&args, "--images"), "/tmp/ref.png");
+        assert_eq!(value_after(&args, "--videos"), "/tmp/ref.mp4");
+        assert_eq!(value_after(&args, "--audios"), "/tmp/ref.mp3");
+        assert_eq!(value_after(&args, "--prompt"), "@image1 follows @audio1");
+    }
+
+    #[test]
+    fn modify_uses_video_cloud_id_not_reference_image_id() {
+        let node = json!({
+            "kind": "cli",
+            "cli": { "args": [
+                "create", "modify", "--video", "{video_id}",
+                "--images", "{images}", "--prompt", "{prompt}", "--json"
+            ] }
+        });
+        let deps = vec![
+            media_dep(1, "image", "/tmp/ref.png", "image-cloud-id"),
+            media_dep(0, "video", "/tmp/source.mp4", "video-cloud-id"),
+            prompt_dep(2, "change the background"),
+        ];
+
+        let args = resolve_pixverse_args(&node, &deps).unwrap();
+        assert_eq!(value_after(&args, "--video"), "video-cloud-id");
+        assert_eq!(value_after(&args, "--images"), "/tmp/ref.png");
+    }
+
+    #[test]
+    fn voice_resolves_text_from_prompt_node() {
+        let node = json!({
+            "kind": "cli",
+            "cli": { "args": ["create", "voice", "--text", "{prompt}", "--json"] }
+        });
+        let args = resolve_pixverse_args(&node, &[prompt_dep(0, "Hello from Beatboard")]).unwrap();
+        assert_eq!(value_after(&args, "--text"), "Hello from Beatboard");
+    }
 }

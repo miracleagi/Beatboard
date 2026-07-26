@@ -1,5 +1,64 @@
 // App entry — owns reducer, hydration, autosave, file import/export.
 
+// ── Resizable side panels ─────────────────────────────────────────────────────
+// Widths persist across restarts in localStorage (UI pref, not project data).
+const PANEL_WIDTH_KEY = 'beatboard.ui.panelWidths';
+const PANEL_DEFAULTS = { leftNodes: 168, leftLibrary: 260, right: 288 };
+const PANEL_LIMITS = { leftNodes: [140, 420], leftLibrary: [180, 440], right: [232, 520] };
+
+function loadPanelWidths() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PANEL_WIDTH_KEY)) || {};
+    return { ...PANEL_DEFAULTS, ...saved };
+  } catch (_) {
+    return { ...PANEL_DEFAULTS };
+  }
+}
+
+// Thin vertical drag handle between a sidebar and the canvas.
+// Drag to resize (clamped), double-click to reset to the default width.
+function PanelSplitter({ t, side, getWidth, setWidth, limits, onReset, setDragging }) {
+  const [hover, setHover] = React.useState(false);
+  const onMouseDown = (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = getWidth();
+    setDragging(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev) => {
+      const dx = ev.clientX - startX;
+      const raw = side === 'left' ? startW + dx : startW - dx;
+      setWidth(Math.min(limits[1], Math.max(limits[0], raw)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setDragging(false);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      onDoubleClick={onReset}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title="拖动调整宽度 · 双击恢复默认"
+      style={{
+        width: 5, flex: 'none', cursor: 'col-resize', zIndex: 11,
+        background: hover ? `${t.accent}66` : 'transparent',
+        borderLeft: side === 'right' ? `1px solid ${t.border}` : 'none',
+        borderRight: side === 'left' ? `1px solid ${t.border}` : 'none',
+        transition: 'background 0.12s',
+      }}
+    />
+  );
+}
+
 function downloadJSON(name, obj) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -110,7 +169,7 @@ function App() {
   };
   const onExport = () => {
     const slug = (project.name || 'project').replace(/[^\w-]/g, '_').toLowerCase();
-    downloadJSON(`${slug}.atlas.json`, { format: 'atlas-graph-v1', project: {
+    downloadJSON(`${slug}.beatboard.json`, { format: 'beatboard-graph-v1', project: {
       name: project.name, color: project.color, outputDir: project.outputDir || '',
       graph: project.graph, runResults: project.runResults,
     }});
@@ -140,7 +199,18 @@ function App() {
   const [leftTab,   setLeftTab]   = React.useState('nodes'); // 'nodes' | 'library'
   const [rightOpen, setRightOpen] = React.useState(true);
 
-  const leftPanelWidth = leftOpen ? (leftTab === 'library' ? 260 : 168) : 0;
+  // Drag-resizable panel widths (kept per left tab; persisted to localStorage)
+  const [panelWidths, setPanelWidths] = React.useState(loadPanelWidths);
+  const [panelDragging, setPanelDragging] = React.useState(false);
+  React.useEffect(() => {
+    try { localStorage.setItem(PANEL_WIDTH_KEY, JSON.stringify(panelWidths)); } catch (_) {}
+  }, [panelWidths]);
+  const leftKey = leftTab === 'library' ? 'leftLibrary' : 'leftNodes';
+  const setPanelWidth = (key) => (w) => setPanelWidths(prev => ({ ...prev, [key]: Math.round(w) }));
+  const resetPanelWidth = (key) => () => setPanelWidths(prev => ({ ...prev, [key]: PANEL_DEFAULTS[key] }));
+
+  const leftPanelWidth = leftOpen ? panelWidths[leftKey] : 0;
+  const panelTransition = panelDragging ? 'none' : 'width 0.18s ease';
 
   // ── Keyboard shortcuts ───────────────────────────────────────────────────────
   // ⌘[ / ⌘]  toggle sidebars
@@ -216,17 +286,25 @@ function App() {
       />
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
 
-        {/* ── Left sidebar (collapsible, width reacts to active tab) ──── */}
+        {/* ── Left sidebar (collapsible + drag-resizable) ──── */}
         <div style={{
           width: leftPanelWidth, flex: 'none',
           overflow: 'hidden',
           display: 'flex', flexDirection: 'column',  // lets Palette fill height via flex-grow
-          transition: 'width 0.18s ease',
+          transition: panelTransition,
         }}>
           <Palette t={t} onDrop={onPaletteDropToCanvas} onAdd={onPaletteAddToCanvas}
             state={state} dispatch={dispatchWithHistory}
             leftTab={leftTab} onLeftTabChange={setLeftTab}/>
         </div>
+        {leftOpen && (
+          <PanelSplitter t={t} side="left"
+            getWidth={() => panelWidths[leftKey]}
+            setWidth={setPanelWidth(leftKey)}
+            limits={PANEL_LIMITS[leftKey]}
+            onReset={resetPanelWidth(leftKey)}
+            setDragging={setPanelDragging}/>
+        )}
 
         {/* ── Canvas + edge toggle tabs ─────────────────── */}
         <div data-canvas style={{ flex: 1, display: 'flex', position: 'relative' }}>
@@ -297,12 +375,20 @@ function App() {
           )}
         </div>
 
-        {/* ── Right sidebar (collapsible) ────────────────── */}
+        {/* ── Right sidebar (collapsible + drag-resizable) ────────────────── */}
+        {rightOpen && (
+          <PanelSplitter t={t} side="right"
+            getWidth={() => panelWidths.right}
+            setWidth={setPanelWidth('right')}
+            limits={PANEL_LIMITS.right}
+            onReset={resetPanelWidth('right')}
+            setDragging={setPanelDragging}/>
+        )}
         <div style={{
-          width: rightOpen ? 288 : 0, flex: 'none',
+          width: rightOpen ? panelWidths.right : 0, flex: 'none',
           overflow: 'hidden',
           display: 'flex', flexDirection: 'column',  // lets Inspector fill height via flex-grow
-          transition: 'width 0.18s ease',
+          transition: panelTransition,
         }}>
           <Inspector t={t} state={state} dispatch={dispatchWithHistory}/>
         </div>

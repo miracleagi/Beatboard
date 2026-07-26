@@ -13,52 +13,67 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
 
   const start = React.useCallback(async (fromNodeId) => {
     if (ref.current.active) return;
-    const order = runOrderNodeIds(graph, fromNodeId);
-    ref.current = { active: true, results: {}, current: null, progress: 0, aborted: false, queue: order, waitingForPick: null };
+    const order = runOrderNodeIds(graph, fromNodeId, { getResult: getRunResult });
+    const queuedResults = Object.fromEntries(order.map(id => [id, { state: 'queued', progress: 0 }]));
+    dispatch({ type: 'CLEAR_RUN_RESULTS_FOR_NODES', projectId, nodeIds: order });
+    ref.current = { active: true, results: queuedResults, current: null, progress: 0, aborted: false, queue: order, waitingForPick: null };
     force();
 
-    for (const id of order) {
+    // Hard failures collected across the run; surfaced once in an error
+    // dialog when the run finishes (blocked nodes are not hard failures).
+    const runErrors = [];
+
+    for (let orderIndex = 0; orderIndex < order.length; orderIndex += 1) {
+      const id = order[orderIndex];
       if (ref.current.aborted) break;
       const node = graph.nodes.find(n => n.id === id);
       if (!node) continue;
 
       ref.current.current = id;
       ref.current.progress = 0;
-      ref.current.results[id] = { state: 'running', progress: 0 };
+      ref.current.queue = order.slice(orderIndex + 1);
+      ref.current.results[id] = { state: 'waiting_dependencies', progress: 0 };
       force();
 
-      const deps = activeDepsForRun(graph, id, fromNodeId).map(e => {
+      const resultForSource = sourceId => ref.current.results[sourceId] || getRunResult(sourceId);
+      const requiredEdges = activeDepsForRun(graph, id);
+      const optionalReadyEdges = graph.edges.filter(e => {
+        if (e.to.node !== id || !e.dashed) return false;
+        const source = graph.nodes.find(n => n.id === e.from.node);
+        return nodeHasUsableOutput(source, resultForSource(e.from.node));
+      });
+      const deps = [...requiredEdges, ...optionalReadyEdges].map(e => {
         const fromNode = graph.nodes.find(n => n.id === e.from.node);
-        let result = ref.current.results[e.from.node] || getRunResult(e.from.node);
-        // For passthrough-kind nodes (select/output) with no persisted result,
-        // synthesize a result from their own upstream so Rust receives valid
-        // dep.result.thumbs even when the intermediate node hasn't been run yet.
-        if (!result && fromNode && (fromNode.kind === 'select' || fromNode.kind === 'output')) {
-          const upDeps = activeDepsForRun(graph, fromNode.id, fromNodeId).map(ue => ({
-            edge: ue,
-            from: graph.nodes.find(n => n.id === ue.from.node),
-            result: ref.current.results[ue.from.node] || getRunResult(ue.from.node),
-          }));
-          const thumbs = upstreamThumbs(upDeps, { forSelect: fromNode.kind === 'select' });
-          if (thumbs.length) {
-            if (fromNode.kind === 'select') {
-              const idx = Math.min(thumbs.length - 1, Math.max(0, fromNode.selectedIndex ?? 0));
-              result = { selectedIndex: idx, thumbs: thumbs.map((t, i) => ({ ...t, chosen: i === idx })) };
-            } else {
-              result = { thumbs: thumbs.slice(0, 4).map((t, i) => ({ ...t, chosen: i === 0 })) };
-            }
-          }
-        }
+        const result = resultForSource(e.from.node);
         return { edge: e, from: fromNode, result };
       });
+
+      const readiness = dependencyReadiness(graph, id, resultForSource);
+      if (!readiness.ok) {
+        const blockedBy = readiness.missing.map(dep => dep.source?.id || dep.edge.from.node);
+        const details = readiness.missing.map(dep => {
+          const label = dep.source?.title || dep.source?.id || dep.edge.from.node;
+          return `${label} (${dep.reason.replace(/_/g, ' ')})`;
+        });
+        const blockedResult = {
+          state: 'blocked', progress: 0, blockedBy,
+          error: `Waiting for required input: ${details.join(', ')}`,
+        };
+        ref.current.results[id] = blockedResult;
+        dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: blockedResult });
+        force();
+        continue;
+      }
 
       // ── Pick / Select node: pause and wait for user to choose ──────────
       if (node.kind === 'select') {
         const candidates = upstreamThumbs(deps, { forSelect: true });
         if (!candidates.length) {
           ref.current.results[id] = { state: 'error', progress: 0, error: 'No upstream results yet — run upstream nodes first.' };
+          dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: ref.current.results[id] });
+          runErrors.push({ nodeId: id, title: node.title || id, error: ref.current.results[id].error });
           force();
-          break;
+          continue;
         }
         // Only 1 candidate — nothing to choose, auto-select and move on
         if (candidates.length === 1) {
@@ -67,12 +82,13 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
           dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result });
           dispatch({ type: 'PATCH_GRAPH', fn: g => ({
             ...g, nodes: g.nodes.map(n => n.id === id ? { ...n, selectedIndex: 0 } : n),
-          })});
+          }), preserveResults: true });
           force();
           continue;
         }
 
         // Suspend the run until the user clicks a thumbnail
+        ref.current.results[id] = { state: 'waiting_user', progress: 0 };
         const selectedIndex = await new Promise(resolve => {
           ref.current.waitingForPick = { nodeId: id, candidates, resolve };
           force();
@@ -85,11 +101,14 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
         dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: pickResult });
         dispatch({ type: 'PATCH_GRAPH', fn: g => ({
           ...g, nodes: g.nodes.map(n => n.id === id ? { ...n, selectedIndex } : n),
-        })});
+        }), preserveResults: true });
         force();
         continue;
       }
       // ───────────────────────────────────────────────────────────────────
+
+      ref.current.results[id] = { state: 'running', progress: 0 };
+      force();
 
       const runConfig = {
         ...(config || {}),
@@ -104,11 +123,17 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
         },
       };
       const ctx = { config: runConfig, abortRef: ref, get aborted() { return ref.current.aborted; } };
-      const res = await Executor.runNode(node, deps, ctx, (p) => {
-        ref.current.progress = p;
-        ref.current.results[id] = { state: 'running', progress: p };
-        force();
-      });
+      let res;
+      try {
+        res = await Executor.runNode(node, deps, ctx, (p) => {
+          if (ref.current.aborted) return;
+          ref.current.progress = p;
+          ref.current.results[id] = { state: 'running', progress: p };
+          force();
+        });
+      } catch (error) {
+        res = { ok: false, error: String(error) };
+      }
       if (ref.current.aborted || res?.error === 'aborted') {
         delete ref.current.results[id];
         break;
@@ -116,22 +141,42 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
       if (res?.ok) {
         const { ok, ...result } = res;
         const doneResult = { ...result, state: 'done', progress: 1 };
-        ref.current.results[id] = doneResult;
-        // ↓ Persist immediately so the node shows its preview right away
-        dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: doneResult });
+        if (nodeHasUsableOutput(node, doneResult)) {
+          ref.current.results[id] = doneResult;
+          // ↓ Persist immediately so the node shows its preview right away
+          dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: doneResult });
+        } else {
+          const errResult = {
+            state: 'error', progress: 0,
+            error: `${node.title || node.id} completed without a usable output.`,
+          };
+          ref.current.results[id] = errResult;
+          dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: errResult });
+          runErrors.push({ nodeId: id, title: node.title || id, error: errResult.error });
+        }
       } else {
         const errResult = { state: 'error', progress: 0, error: res?.error || 'failed' };
         ref.current.results[id] = errResult;
         dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: errResult });
-        force();
-        break;
+        runErrors.push({ nodeId: id, title: node.title || id, error: errResult.error });
       }
       force();
     }
 
+    if (ref.current.aborted) {
+      Object.entries(ref.current.results).forEach(([id, result]) => {
+        if (result.state === 'queued' || result.state === 'waiting_dependencies' || result.state === 'waiting_user') {
+          delete ref.current.results[id];
+        }
+      });
+    }
     ref.current.active = false;
     ref.current.current = null;
     ref.current.waitingForPick = null;
+    // Surface hard failures in one dialog now that the run is over.
+    if (!ref.current.aborted && runErrors.length) {
+      dispatch({ type: 'UI_PATCH', patch: { errorModal: { errors: runErrors } } });
+    }
     force();
   }, [projectId, projectName, projectOutputDir, graph, dispatch, config, getRunResult]);
 
@@ -223,7 +268,7 @@ function selectCandidateThumbs(graph, project, node) {
   if (node.kind === 'select') {
     const thumbs = [];
     graph.edges
-      .filter(edge => edge.to.node === node.id)
+      .filter(edge => edge.to.node === node.id && !edge.dashed)
       .forEach(edge => {
         const from = nodeById(graph, edge.from.node);
         const source = editorSourceThumbs(from, project.runResults[from?.id]);
@@ -287,10 +332,14 @@ function computeAutoLayout(nodes, edges) {
         if (args.includes('transition') || /create transition/.test(footer)) return KIND_COL.motion;
         if (args.includes('reference') || /create reference/.test(footer)) return KIND_COL.motion;
         if (args.includes('motion-control') || /create motion-control/.test(footer)) return KIND_COL.motion;
-        // col 3 (cli): extend, upscale, speech (post-process)
+        // col 3 (cli): post-process operations
         if (args.includes('extend') || /create extend/.test(footer)) return KIND_COL.cli;
         if (args.includes('upscale') || /create upscale/.test(footer)) return KIND_COL.cli;
-        if (args.includes('speech') || /create speech/.test(footer)) return KIND_COL.cli;
+        if (args.includes('modify') || /create modify/.test(footer)) return KIND_COL.cli;
+        // Standalone audio generation sits with other generators.
+        if (args.includes('voice') || /create voice/.test(footer)) return KIND_COL.gen;
+        if (args.includes('music') || /create music/.test(footer)) return KIND_COL.gen;
+        if (args.includes('template') || /create template/.test(footer)) return KIND_COL.motion;
       }
       // pixverse but unknown subcommand — treat as image gen
       return KIND_COL.gen;
@@ -621,10 +670,20 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
   };
 
   const onPatchNode = (id, patch) => {
+    const currentNode = nodeById(graph, id);
     dispatch({ type: 'PATCH_GRAPH', fn: g => ({
       ...g,
       nodes: g.nodes.map(n => n.id === id ? { ...n, ...patch } : n),
     })});
+    // A manual Pick is itself a fresh node output. Keep that selected result
+    // while PATCH_GRAPH invalidates every dependent downstream result.
+    if (currentNode?.kind === 'select' && Array.isArray(patch.thumbs) && patch.thumbs.some(thumbHasUsableSource)) {
+      const selectedIndex = Math.max(0, patch.selectedIndex ?? patch.thumbs.findIndex(thumb => thumb.chosen));
+      dispatch({
+        type: 'SET_RUN_RESULT', projectId: project.id, nodeId: id,
+        result: { state: 'done', progress: 1, selectedIndex, thumbs: patch.thumbs },
+      });
+    }
   };
 
   // ---- DROP FROM PALETTE ----
@@ -752,7 +811,9 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
     if (!f || !u) return null;
     const color = PORT_COLORS[f.kind] || t.accent;
     const sel = ui.selectedEdgeIdx === i;
-    const running = runner.getOverride(e.to.node)?.state === 'running';
+    const source = nodeById(graph, e.from.node);
+    const sourceReady = !e.dashed && nodeHasUsableOutput(source, runner.getOverride(e.from.node));
+    const running = sourceReady && runner.getOverride(e.to.node)?.state === 'running';
     if (!sel && !running) return null;
     const s = edgeStyleFor(e, sel, true);
     const path = bezierEdgePath(f, u);
@@ -865,6 +926,7 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
             runOverride={runner.getOverride(n.id)}
             runResult={project.runResults[n.id]}
             candidateThumbs={selectCandidateThumbs(graph, project, n)}
+            inputReadiness={nodeInputPortStatuses(graph, n.id, id => runner.getOverride(id))}
             statusStyle={statusStyle}
             onMouseDown={onNodeMouseDown}
             onPortMouseDown={onPortMouseDown}
@@ -974,8 +1036,8 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
           <span><span style={{ color: t.accent }}>[pick]</span> 请在弹窗中选择一张图片继续…</span>
         ) : runner.state.active && runner.state.current ? (
           <span><span style={{ color: t.amber }}>[run]</span> {runner.state.current} · {Math.round(runner.state.progress*100)}%</span>
-        ) : Object.keys(runner.state.results).some(k => runner.state.results[k].state === 'error') ? (
-          <span><span style={{ color: t.red }}>[err]</span> halted · check inspector for retry</span>
+        ) : Object.keys(runner.state.results).some(k => runner.state.results[k].state === 'error' || runner.state.results[k].state === 'blocked') ? (
+          <span><span style={{ color: t.red }}>[blocked]</span> required outputs are missing · check node ports</span>
         ) : Object.keys(project.runResults).length > 0 ? (
           <span><span style={{ color: t.green }}>[ok]</span> last run · {defaultDoneCount}/{defaultRunOrder.length} default done</span>
         ) : (
@@ -994,6 +1056,17 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
           candidates={runner.state.waitingForPick.candidates}
           onPick={runner.pick}
           onAbort={runner.abort}
+        />
+      )}
+
+      {/* Error dialog — run failures, surfaced once per run */}
+      {ui.errorModal && (ui.errorModal.errors || []).length > 0 && (
+        <ErrorModal
+          t={t}
+          errors={ui.errorModal.errors}
+          onClose={() => dispatch({ type: 'UI_PATCH', patch: { errorModal: null } })}
+          onOpenConfig={() => dispatch({ type: 'UI_PATCH', patch: { errorModal: null, configOpen: true } })}
+          onSelectNode={(nodeId) => dispatch({ type: 'UI_PATCH', patch: { errorModal: null, selectedNodeId: nodeId } })}
         />
       )}
 
@@ -1074,13 +1147,134 @@ function ContextMenu({ t, x, y, items, onClose }) {
 // ---- PICK MODAL ----
 // Full-screen selection overlay. Suspends the run until the user clicks one
 // thumbnail, then resumes downstream execution with that choice.
+// ---- ERROR MODAL ----
+// Centered dialog listing every hard failure of the last run. Errors stay
+// out of the inline layout (the Inspector shows a one-line summary + 详情).
+function ErrorModal({ t, errors, onClose, onOpenConfig, onSelectNode }) {
+  const [copied, setCopied] = React.useState(false);
+
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const copyAll = () => {
+    const text = errors.map(er => `[${er.title}] ${er.error}`).join('\n\n');
+    try {
+      navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (_) {}
+  };
+
+  // The most common first-run failure: managed runtime not installed yet.
+  const needsRuntime = errors.some(er => /managed runtime|Beatboard Config/i.test(String(er.error || '')));
+
+  const btnStyle = {
+    padding: '5px 14px', background: 'transparent',
+    border: `1px solid ${t.border}`, borderRadius: 6,
+    color: t.textMid, cursor: 'pointer',
+    fontFamily: FONT_UI, fontSize: 12,
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 2100,
+        background: 'rgba(6,9,14,0.72)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: 'min(600px, 86vw)', maxHeight: '72vh',
+          display: 'flex', flexDirection: 'column',
+          background: t.panel, borderRadius: 10,
+          border: `1px solid ${t.red}66`,
+          boxShadow: `0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px ${t.red}22`,
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '12px 16px', borderBottom: `1px solid ${t.border}`, flexShrink: 0,
+        }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: t.red, flexShrink: 0 }}/>
+          <span style={{ color: t.text, fontSize: 13, fontFamily: FONT_UI, fontWeight: 600 }}>
+            运行失败 · {errors.length} 个节点
+          </span>
+          <span
+            onClick={onClose}
+            style={{ marginLeft: 'auto', color: t.textMute, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 4 }}
+            onMouseEnter={e => { e.currentTarget.style.color = t.text; }}
+            onMouseLeave={e => { e.currentTarget.style.color = t.textMute; }}
+          >✕</span>
+        </div>
+
+        {/* Error list */}
+        <div className="mg-scroll" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 16px' }}>
+          {errors.map((er, i) => (
+            <div key={`${er.nodeId}-${i}`} style={{ marginBottom: i === errors.length - 1 ? 0 : 12 }}>
+              <div
+                onClick={() => onSelectNode && onSelectNode(er.nodeId)}
+                title="在画布上选中该节点"
+                style={{
+                  color: t.text, fontFamily: FONT_MONO, fontSize: 11, fontWeight: 600,
+                  marginBottom: 5, cursor: 'pointer', display: 'inline-block',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.color = t.accent; }}
+                onMouseLeave={e => { e.currentTarget.style.color = t.text; }}
+              >
+                ● {er.title} <span style={{ color: t.textMute, fontWeight: 400 }}>({er.nodeId})</span>
+              </div>
+              <pre style={{
+                margin: 0, padding: '9px 11px',
+                background: 'rgba(0,0,0,0.28)', borderRadius: 6,
+                border: `1px solid ${t.border}`,
+                color: t.red, fontFamily: FONT_MONO, fontSize: 11, lineHeight: 1.55,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              }}>{String(er.error || 'failed')}</pre>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '11px 16px', borderTop: `1px solid ${t.border}`, flexShrink: 0,
+        }}>
+          {needsRuntime && (
+            <span style={{ color: t.textMute, fontFamily: FONT_MONO, fontSize: 10.5 }}>
+              提示:可在 Config 安装托管的 PixVerse 运行时
+            </span>
+          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {needsRuntime && (
+              <button style={{ ...btnStyle, borderColor: t.accent, color: t.accent }} onClick={onOpenConfig}>
+                打开 Config
+              </button>
+            )}
+            <button style={btnStyle} onClick={copyAll}>{copied ? '已复制 ✓' : '复制错误'}</button>
+            <button style={btnStyle} onClick={onClose}>关闭</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PickModal({ t, candidates, onPick, onAbort }) {
   const thumbSrc = (thumb) => (
     (typeof mediaSrc === 'function' && mediaSrc(thumb)) ||
-    thumb.url || thumb.videoUrl || thumb.video_url || thumb.path || thumb.output || thumb.src || ''
+    thumb.url || thumb.videoUrl || thumb.video_url || thumb.audioUrl || thumb.audio_url || thumb.path || thumb.output || thumb.src || ''
   );
   const isVideo = (thumb, src) =>
     thumb.type === 'video' || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(src || thumb.videoUrl || thumb.video_url || thumb.output || '');
+  const isAudio = (thumb, src) =>
+    thumb.type === 'audio' || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(src || thumb.audioUrl || thumb.audio_url || thumb.output || '');
 
   // Grid columns: 1→1col, 2→2col, 3→3col, 4+→2col (wraps to rows)
   const n = candidates.length;
@@ -1101,7 +1295,7 @@ function PickModal({ t, candidates, onPick, onAbort }) {
       }}>
         <div>
           <span style={{ color: t.text, fontSize: 14, fontFamily: FONT_UI, fontWeight: 600 }}>
-            选择一张图片继续
+            选择一个媒体结果继续
           </span>
           <span style={{ color: t.textMute, fontSize: 11, fontFamily: FONT_MONO, marginLeft: 12 }}>
             工作流已暂停 · 点击后继续后续节点生成
@@ -1133,6 +1327,7 @@ function PickModal({ t, candidates, onPick, onAbort }) {
         {candidates.map((thumb, i) => {
           const src = thumbSrc(thumb);
           const vid = isVideo(thumb, src);
+          const aud = isAudio(thumb, src);
           return (
             <div
               key={thumb.seed || i}
@@ -1155,7 +1350,11 @@ function PickModal({ t, candidates, onPick, onAbort }) {
             >
               {/* Media */}
               {src ? (
-                vid
+                aud
+                  ? <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', padding: 16, boxSizing: 'border-box' }}>
+                      <audio src={src} controls preload="metadata" style={{ width: '100%' }}/>
+                    </div>
+                  : vid
                   ? <video src={src} muted playsInline autoPlay loop
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }}/>
                   : <img src={src} alt={thumb.label || `option ${i + 1}`}

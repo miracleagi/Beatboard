@@ -3,19 +3,19 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Atlas · pipeline</title>
+<title>Beatboard · canvas</title>
 <link rel="icon" href="data:,">
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #0f141c; }
   body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
   #app { width: 100vw; height: 100vh; }
   #app:empty::before {
-    content: 'Loading Atlas…';
+    content: 'Loading Beatboard…';
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
     color: #5f7396; font-family: 'JetBrains Mono', monospace; font-size: 12px;
   }
-  #atlas-error {
+  #beatboard-error {
     display: none;
     position: fixed; inset: 0; z-index: 9999;
     background: #0f141c; color: #f87171;
@@ -26,7 +26,7 @@
 </head>
 <body>
 <div id="app"></div>
-<div id="atlas-error"></div>
+<div id="beatboard-error"></div>
 
 <script>
   // Catch any uncaught JS errors and show them in the window
@@ -34,13 +34,13 @@
   var _errors = [];
   window.addEventListener('error', function(e) {
     _errors.push((e.filename || '') + ':' + e.lineno + '\n' + e.message + (e.error ? '\n' + e.error.stack : ''));
-    var el = document.getElementById('atlas-error');
+    var el = document.getElementById('beatboard-error');
     el.style.display = 'block';
     el.textContent = '── JS ERROR ──\n' + _errors.join('\n\n──\n');
   });
   window.addEventListener('unhandledrejection', function(e) {
     _errors.push('UnhandledPromise: ' + (e.reason && e.reason.stack ? e.reason.stack : String(e.reason)));
-    var el = document.getElementById('atlas-error');
+    var el = document.getElementById('beatboard-error');
     el.style.display = 'block';
     el.textContent = '── JS ERROR ──\n' + _errors.join('\n\n──\n');
   });
@@ -51,7 +51,7 @@
 <script src="lib/react-dom.development.js"></script>
 <script src="lib/babel.min.js"></script>
 
-<!-- Tauri bridge: sets window.AtlasStorage + window.AtlasExecutor -->
+<!-- Tauri bridge: sets the storage + executor bridge -->
 <script src="tauri-bridge.js"></script>
 
 <!-- Shared primitives -->

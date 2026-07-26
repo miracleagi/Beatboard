@@ -3,6 +3,7 @@
 mod ffmpeg;
 mod mcp;
 mod pixverse;
+mod runtime;
 mod storage;
 mod thumbs;
 mod utils;
@@ -10,7 +11,7 @@ mod utils;
 use serde_json::Value;
 use std::io::{Read, Seek, SeekFrom};
 use storage::{load_graph, save_graph};
-use tauri::http::{ResponseBuilder, status::StatusCode};
+use tauri::http::{status::StatusCode, ResponseBuilder};
 use tauri::{AppHandle, Window};
 use utils::{expand_tilde, percent_decode};
 
@@ -27,8 +28,8 @@ async fn run_node(
 ) -> Result<Value, String> {
     match cli_bin_name(&node).as_str() {
         "pixverse" => pixverse::run_pixverse(app, window, node, deps, config, run_id).await,
-        "ffmpeg"   => ffmpeg::run_ffmpeg(app, window, node, deps, config, run_id).await,
-        other      => Err(format!("Unsupported command: {other}")),
+        "ffmpeg" => ffmpeg::run_ffmpeg(app, window, node, deps, config, run_id).await,
+        other => Err(format!("Unsupported command: {other}")),
     }
 }
 
@@ -65,7 +66,11 @@ fn cli_bin_name(node: &Value) -> String {
 // Copies `src` into `{dest_dir}/{filename}`.
 // Returns the full destination path on success.
 #[tauri::command]
-fn copy_to_downloads(src: String, project_name: String, dest_dir: String) -> Result<String, String> {
+fn copy_to_downloads(
+    src: String,
+    project_name: String,
+    dest_dir: String,
+) -> Result<String, String> {
     let src_expanded = expand_tilde(&src);
     let src_path = std::path::Path::new(&src_expanded);
     if !src_path.exists() {
@@ -83,12 +88,22 @@ fn copy_to_downloads(src: String, project_name: String, dest_dir: String) -> Res
     let safe_name: String = project_name
         .trim()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join("_");
-    let safe_name = if safe_name.is_empty() { "Output".to_string() } else { safe_name };
+    let safe_name = if safe_name.is_empty() {
+        "Output".to_string()
+    } else {
+        safe_name
+    };
 
     let dest_root = expand_tilde(&dest_dir);
     let dest_subdir = std::path::Path::new(&dest_root);
@@ -218,6 +233,14 @@ fn media_mime(path: &std::path::Path) -> &'static str {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",
+        "gif" => "image/gif",
+        "avif" => "image/avif",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
         _ => "application/octet-stream",
     }
 }
@@ -227,8 +250,18 @@ fn media_mime(path: &std::path::Path) -> &'static str {
 fn main() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("atlasmedia", media_protocol)
-        .invoke_handler(tauri::generate_handler![load_graph, save_graph, run_node, copy_to_downloads, mcp::mcp_response])
+        .invoke_handler(tauri::generate_handler![
+            load_graph,
+            save_graph,
+            run_node,
+            copy_to_downloads,
+            mcp::mcp_response,
+            runtime::runtime_status,
+            runtime::install_pixverse_runtime,
+            runtime::pixverse_auth_login,
+        ])
         .setup(|app| {
+            storage::migrate_legacy_app_data(&app.handle());
             mcp::start(app.handle());
             Ok(())
         })

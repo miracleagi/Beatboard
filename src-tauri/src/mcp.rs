@@ -1,4 +1,4 @@
-// MCP server — exposes the Atlas canvas to AI agents (Claude Code, Cursor, …)
+// MCP server — exposes the Beatboard canvas to AI agents (Claude Code, Cursor, …)
 // over the Model Context Protocol (streamable-HTTP transport, JSON-RPC 2.0).
 //
 // The server owns no graph state: every tool call is forwarded to the React
@@ -16,7 +16,11 @@ const DEFAULT_PORT: u16 = 4923;
 const OP_TIMEOUT: Duration = Duration::from_secs(30);
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
-const TOOL_NAMES: [&str; 6] = [
+const TOOL_NAMES: [&str; 10] = [
+    "list_projects",
+    "create_project",
+    "switch_project",
+    "delete_project",
     "get_graph",
     "add_node",
     "connect_nodes",
@@ -25,12 +29,13 @@ const TOOL_NAMES: [&str; 6] = [
     "get_node_result",
 ];
 
-const SERVER_INSTRUCTIONS: &str = "Atlas is a node-graph canvas for AI media \
+const SERVER_INSTRUCTIONS: &str = "Beatboard is a multi-project node-graph canvas for AI media \
 generation, open on the user's desktop — every change you make is visible to \
-them live. Typical flow: get_graph to orient → add_node for inputs (prompt, \
+them live. Use list_projects to inspect canvases; create_project, switch_project, and \
+delete_project manage them. Typical graph flow: get_graph to orient → add_node for inputs (prompt, \
 asset) and generators (image, video, transition, …) → connect_nodes to wire \
 inputs into generator ports → run_node → poll get_node_result until 'done', \
-then use the returned local file paths. Generation runs on the PixVerse cloud \
+then use the returned local file paths. Image, video, voice, and music generation runs on the PixVerse cloud \
 and takes 1–5 minutes per node; ffmpeg_compose concatenates videos locally. \
 The user can also edit and run the canvas themselves at any time.";
 
@@ -58,13 +63,13 @@ fn call_frontend(app: &AppHandle, tool: &str, args: &Value) -> Value {
     pending_map().lock().unwrap().insert(id, tx);
     if let Err(e) = app.emit_all("mcp:op", json!({ "id": id, "tool": tool, "args": args })) {
         pending_map().lock().unwrap().remove(&id);
-        return json!({ "error": format!("failed to reach the Atlas window: {e}") });
+        return json!({ "error": format!("failed to reach the Beatboard window: {e}") });
     }
     match rx.recv_timeout(OP_TIMEOUT) {
         Ok(v) => v,
         Err(_) => {
             pending_map().lock().unwrap().remove(&id);
-            json!({ "error": "timed out waiting for the Atlas window — is the app open and a project loaded?" })
+            json!({ "error": "timed out waiting for the Beatboard window — is the app open and a project loaded?" })
         }
     }
 }
@@ -76,31 +81,78 @@ fn tool_definitions() -> Value {
         "type": "object",
         "description": "Node parameters. Accepted keys depend on the node type: \
             `title` (any node); `prompt` (prompt + generator nodes); \
-            `path` (asset nodes — absolute local file path of an image/video); \
-            `model`, `quality`, `aspect_ratio`, `duration`, `count`, `timeout` \
-            (PixVerse generator nodes; e.g. model 'qwen-image' for image, 'v6' for video, \
-            quality '720p'/'1080p', aspect_ratio '16:9', duration seconds, count = variants); \
+            `path` (asset nodes — absolute local file path of an image/video/audio); \
+            `model`, `quality`, `aspect_ratio`, `duration`, `duration_seconds`, `count`, `seed`, `timeout`, \
+            `detail_level`, `lyrics`, `voice_id`, `provider_voice_id`, `language`, `speed`, `emotion`, \
+            `stability`, `similarity_boost`, `style`, `volume`, `pitch`, `client_request_id`, \
+            `keyframe_time`, `template_id`, `idempotency_key`, `output`, `audio`, `multi_shot`, `off_peak`, \
+            `instrumental`, `auto_lyrics`, `no_duration_auto`, `use_speaker_boost`, `no_wait` \
+            (PixVerse generator nodes; e.g. model 'gpt-image-2.0' for image, 'v6' for video, \
+            quality '720p'/'1080p' — except upscale which only accepts '2160p', \
+            aspect_ratio '16:9', duration seconds, count = variants); \
             `selected_index` (pick nodes)."
     });
     json!([
         {
+            "name": "list_projects",
+            "description": "List every Beatboard canvas project with its stable id, name, active state, output directory, and graph size. Call this before switching or deleting a project.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "create_project",
+            "description": "Create a new blank canvas project and make it active. Project management is rejected while a graph run is active.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Project name; defaults to Untitled" },
+                    "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$", "description": "Optional tab color as #RRGGBB" },
+                    "output_dir": { "type": "string", "description": "Optional absolute local output directory" }
+                }
+            }
+        },
+        {
+            "name": "switch_project",
+            "description": "Make an existing canvas project active so subsequent graph tools operate on it. Project management is rejected while a graph run is active.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": { "type": "string", "description": "Project id returned by list_projects" }
+                },
+                "required": ["project_id"]
+            }
+        },
+        {
+            "name": "delete_project",
+            "description": "Delete a canvas project by id after explicit confirmation. This removes Beatboard project state but does not delete generated media files. The last remaining project cannot be deleted, and deletion is rejected while a graph run is active.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": { "type": "string", "description": "Project id returned by list_projects" },
+                    "confirm": { "type": "boolean", "const": true, "description": "Must be true to confirm deletion" }
+                },
+                "required": ["project_id", "confirm"]
+            }
+        },
+        {
             "name": "get_graph",
-            "description": "Return the current canvas: all nodes (id, type, title, params, input ports, result state) and edges. Call this first to orient yourself.",
+            "description": "Return the active canvas project id/name/output directory, all nodes (id, type, title, params, input ports, result state), and edges. Use list_projects and switch_project to target another canvas.",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
             "name": "add_node",
-            "description": "Add a node to the canvas. Types — inputs: `prompt` (text prompt), `asset` (local image/video file, set params.path); \
-                generators (PixVerse cloud): `image` (text/image-to-image), `video` (text/image-to-video), `transition` (video between two images, ports 'from'/'to'), \
-                `reference` (generate from multiple reference images/videos), `motion_control` (drive a character image with a motion video), \
-                `extend` / `upscale` / `speech` (operate on an upstream video); \
+            "description": "Add a node to the canvas. Types — inputs: `prompt` (text prompt), `asset` (local image/video/audio file, set params.path); \
+                generators (PixVerse cloud): `image` (text-to-image, or image-to-image fusing multiple connected refs), `video` (text/image-to-video), \
+                `transition` (keyframe transition video across the connected frames in port order, 2+ required, ports 'frame 1'…'frame 3'), \
+                `reference` (generate from multiple reference images/videos/audio), `motion_control` (drive a character image with a motion video), \
+                `extend` / `modify` (operate on an upstream video) / `upscale` (upstream video → 2160p), \
+                `voice` (text-to-speech audio), `music` (prompt-to-music audio), `template` (PixVerse template/effect); \
                 other: `pick` (human selects among upstream candidates — pauses the run until the user clicks), \
                 `ffmpeg_compose` (concatenate connected video clips locally), `output` (final sink). \
                 Returns the new node_id and its input port labels.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "type": { "type": "string", "enum": ["prompt", "asset", "image", "video", "transition", "reference", "motion_control", "extend", "upscale", "speech", "pick", "ffmpeg_compose", "output"] },
+                    "type": { "type": "string", "enum": ["prompt", "asset", "image", "video", "transition", "reference", "motion_control", "extend", "upscale", "modify", "voice", "music", "template", "pick", "ffmpeg_compose", "output"] },
                     "params": params_schema,
                     "x": { "type": "number", "description": "Canvas position (optional, auto-laid-out if omitted)" },
                     "y": { "type": "number" }
@@ -116,7 +168,7 @@ fn tool_definitions() -> Value {
                 "properties": {
                     "from_node": { "type": "string" },
                     "to_node": { "type": "string" },
-                    "to_port": { "type": "string", "description": "Target input port label as shown by get_graph (e.g. 'prompt', 'src', 'from', 'to', 'clips')" }
+                    "to_port": { "type": "string", "description": "Target input port label as shown by get_graph (e.g. 'prompt', 'img 1', 'frame 2', 'video', 'clips')" }
                 },
                 "required": ["from_node", "to_node"]
             }
@@ -145,7 +197,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "get_node_result",
-            "description": "Get a node's execution state: idle | running (with progress) | waiting_for_pick (human must click a choice in the Atlas window) | done (with local file paths of the generated media) | error.",
+            "description": "Get a node's execution state: idle | running (with progress) | waiting_for_pick (human must click a choice in the Beatboard window) | done (with local file paths of the generated media) | error.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -184,8 +236,8 @@ fn handle_message(app: &AppHandle, msg: &Value) -> Option<Value> {
                 "protocolVersion": requested,
                 "capabilities": { "tools": {} },
                 "serverInfo": {
-                    "name": "atlas",
-                    "title": "Atlas — AI media canvas",
+                    "name": "beatboard",
+                    "title": "Beatboard — AI media canvas",
                     "version": env!("CARGO_PKG_VERSION")
                 },
                 "instructions": SERVER_INSTRUCTIONS
@@ -194,7 +246,10 @@ fn handle_message(app: &AppHandle, msg: &Value) -> Option<Value> {
         "ping" => json!({}),
         "tools/list" => json!({ "tools": tool_definitions() }),
         "tools/call" => {
-            let name = msg.pointer("/params/name").and_then(|v| v.as_str()).unwrap_or("");
+            let name = msg
+                .pointer("/params/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if !TOOL_NAMES.contains(&name) {
                 return Some(rpc_error(id, -32602, &format!("unknown tool: {name}")));
             }
@@ -207,7 +262,13 @@ fn handle_message(app: &AppHandle, msg: &Value) -> Option<Value> {
             let text = serde_json::to_string_pretty(&reply).unwrap_or_else(|_| reply.to_string());
             json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
         }
-        _ => return Some(rpc_error(id, -32601, &format!("method not found: {method}"))),
+        _ => {
+            return Some(rpc_error(
+                id,
+                -32601,
+                &format!("method not found: {method}"),
+            ))
+        }
     };
     Some(rpc_result(id, result))
 }
@@ -228,7 +289,8 @@ fn empty_response(status: u16) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> 
 
 pub fn start(app: AppHandle) {
     std::thread::spawn(move || {
-        let port = std::env::var("ATLAS_MCP_PORT")
+        let port = std::env::var("BEATBOARD_MCP_PORT")
+            .or_else(|_| std::env::var("ATLAS_MCP_PORT")) // pre-rename name
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(DEFAULT_PORT);
@@ -254,7 +316,11 @@ pub fn start(app: AppHandle) {
                     },
                     Err(_) => json_response(
                         400,
-                        &rpc_error(Value::Null, -32700, "parse error: body must be a JSON-RPC message"),
+                        &rpc_error(
+                            Value::Null,
+                            -32700,
+                            "parse error: body must be a JSON-RPC message",
+                        ),
                     ),
                 },
                 // Session teardown — stateless server, nothing to do.
@@ -265,4 +331,30 @@ pub fn start(app: AppHandle) {
             let _ = request.respond(response);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tool_definitions, TOOL_NAMES};
+
+    #[test]
+    fn tool_registry_and_definitions_stay_in_sync() {
+        let definitions = tool_definitions();
+        let names = definitions
+            .as_array()
+            .expect("tool definitions should be an array")
+            .iter()
+            .filter_map(|definition| definition.get("name").and_then(|name| name.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, TOOL_NAMES);
+        for required in [
+            "list_projects",
+            "create_project",
+            "switch_project",
+            "delete_project",
+        ] {
+            assert!(names.contains(&required));
+        }
+    }
 }

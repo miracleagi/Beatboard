@@ -103,7 +103,7 @@ function StateExpanded({ theme = 'dark' }) {
     id: 'cli', title: 'ffmpeg · compose', kind: 'cli', x: 100, y: 28, w: 380, badge: 'cli · local',
     cli: {
       cmd: 'ffmpeg',
-      args: ['-i shot01.mp4', '-i shot02.mp4', '-i shot03.mp4', '-filter_complex xfade=dissolve', '-c:v libx264 -crf 18', '{out}.mp4'],
+      args: ['-i shot01.mp4', '-i shot02.mp4', '-i shot03.mp4', '-filter_complex xfade=dissolve', '-c:v h264_videotoolbox (mpeg4 fallback)', '{out}.mp4'],
     },
     ports: [
       { kind: 'video', side: 'left', top: 36, label: 's1' },

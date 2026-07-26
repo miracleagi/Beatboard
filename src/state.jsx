@@ -35,16 +35,19 @@ const NODE_TEMPLATES = [
       kind: 'cli', title: 'PixVerse image', w: 244, badge: 'cli · pixverse',
       cli: {
         bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'image', '--prompt', '{prompt}', '--image', '{image}', '--model', 'qwen-image',
+        // {images} expands to every connected image dep (multi-image fusion,
+        // e.g. gpt-image-2.0 / gemini); auto-dropped when nothing is connected.
+        args: ['create', 'image', '--prompt', '{prompt}', '--images', '{images}', '--model', 'gpt-image-2.0',
                '--quality', '1080p', '--aspect-ratio', '16:9', '--count', '1',
                '--timeout', '300', '--json'],
-        fields: [{ k: 'mode', v: 'T2I/I2I' }, { k: 'model', v: 'qwen-image' },
+        fields: [{ k: 'mode', v: 'T2I/I2I' }, { k: 'model', v: 'gpt-image-2.0' },
                  { k: 'quality', v: '1080p' }, { k: 'ratio', v: '16:9' }],
       },
       ports: [
-        { kind: 'image', side: 'left', top: 44, label: 'src' },
-        { kind: 'text', side: 'left', top: 68, label: 'prompt' },
-        { kind: 'image', side: 'right', top: 58 },
+        { kind: 'image', side: 'left', top: 44, label: 'img 1' },
+        { kind: 'image', side: 'left', top: 68, label: 'img 2' },
+        { kind: 'text', side: 'left', top: 92, label: 'prompt' },
+        { kind: 'image', side: 'right', top: 68 },
       ],
       footer: { left: 'pixverse create image', right: '— idle' },
     }),
@@ -74,19 +77,21 @@ const NODE_TEMPLATES = [
       kind: 'cli', title: 'PixVerse transition', w: 244, badge: 'cli · pixverse',
       cli: {
         bin: 'pixverse', cmd: 'pixverse',
-        // --images accepts multiple values (CLI variadic): pass both frames + optional prompt
-        args: ['create', 'transition', '--images', '{from}', '{to}',
+        // Multi-frame keyframe transition: {images} expands to every connected
+        // keyframe in port order (2+ required by the CLI).
+        args: ['create', 'transition', '--images', '{images}',
                '--prompt', '{prompt}',
                '--model', 'v6', '--quality', '720p',
                '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'transition' }, { k: 'model', v: 'v6' },
+        fields: [{ k: 'mode', v: 'transition · keyframes' }, { k: 'model', v: 'v6' },
                  { k: 'quality', v: '720p' }],
       },
       ports: [
-        { kind: 'image', side: 'left', top: 44, label: 'from' },
-        { kind: 'image', side: 'left', top: 68, label: 'to' },
-        { kind: 'text',  side: 'left', top: 92, label: 'prompt' },
-        { kind: 'video', side: 'right', top: 68 },
+        { kind: 'image', side: 'left', top: 44, label: 'frame 1' },
+        { kind: 'image', side: 'left', top: 68, label: 'frame 2' },
+        { kind: 'image', side: 'left', top: 92, label: 'frame 3' },
+        { kind: 'text',  side: 'left', top: 116, label: 'prompt' },
+        { kind: 'video', side: 'right', top: 80 },
       ],
       footer: { left: 'pixverse create transition', right: '— idle' },
     }),
@@ -96,10 +101,11 @@ const NODE_TEMPLATES = [
       kind: 'cli', title: 'PixVerse reference', w: 244, badge: 'cli · pixverse',
       cli: {
         bin: 'pixverse', cmd: 'pixverse',
-        // {images} expands to ALL connected image deps (up to 7); {videos} for video refs
+        // Multi-value tokens expand to every connected reference of that media type.
         args: ['create', 'reference',
                '--images', '{images}',
                '--videos', '{videos}',
+               '--audios', '{audios}',
                '--prompt', '{prompt}',
                '--model', 'v6', '--quality', '720p', '--aspect-ratio', '16:9',
                '--timeout', '600', '--json'],
@@ -111,8 +117,9 @@ const NODE_TEMPLATES = [
         { kind: 'image', side: 'left', top: 68,  label: 'img 2' },
         { kind: 'image', side: 'left', top: 92,  label: 'img 3' },
         { kind: 'video', side: 'left', top: 116, label: 'vid ref' },
-        { kind: 'text',  side: 'left', top: 140, label: 'prompt' },
-        { kind: 'video', side: 'right', top: 92 },
+        { kind: 'audio', side: 'left', top: 140, label: 'aud ref' },
+        { kind: 'text',  side: 'left', top: 164, label: 'prompt' },
+        { kind: 'video', side: 'right', top: 104 },
       ],
       footer: { left: 'pixverse create reference', right: '— idle' },
     }),
@@ -161,10 +168,11 @@ const NODE_TEMPLATES = [
       kind: 'cli', title: 'PixVerse upscale', w: 244, badge: 'cli · pixverse',
       cli: {
         bin: 'pixverse', cmd: 'pixverse',
-        // --video accepts file path, URL, or video ID
+        // --video accepts file path, URL, or video ID.
+        // Since CLI 1.2.10 the only accepted target quality is 2160p.
         args: ['create', 'upscale', '--video', '{video_id}',
-               '--quality', '1080p', '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'upscale' }, { k: 'quality', v: '1080p' }],
+               '--quality', '2160p', '--timeout', '600', '--json'],
+        fields: [{ k: 'mode', v: 'upscale' }, { k: 'quality', v: '2160p' }],
       },
       ports: [
         { kind: 'video', side: 'left', top: 52, label: 'video' },
@@ -173,23 +181,85 @@ const NODE_TEMPLATES = [
       footer: { left: 'pixverse create upscale', right: '— idle' },
     }),
   },
-  { kind: 'cli', title: 'PixVerse · speech', group: 'PixVerse',
+  { kind: 'cli', title: 'PixVerse · modify', group: 'PixVerse',
     spawn: () => ({
-      kind: 'cli', title: 'PixVerse speech', w: 244, badge: 'cli · pixverse',
+      kind: 'cli', title: 'PixVerse modify', w: 244, badge: 'cli · pixverse',
       cli: {
         bin: 'pixverse', cmd: 'pixverse',
-        // lip-sync TTS: --video = source, --tts-text = script text
-        args: ['create', 'speech', '--video', '{video_id}',
-               '--tts-text', '{prompt}',
-               '--model', 'v5', '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'speech' }, { k: 'model', v: 'v5' }],
+        args: ['create', 'modify', '--video', '{video_id}',
+               '--images', '{images}', '--prompt', '{prompt}',
+               '--keyframe-time', '0', '--model', 'v5.5', '--quality', '720p',
+               '--count', '1', '--timeout', '600', '--json'],
+        fields: [{ k: 'mode', v: 'modify' }, { k: 'model', v: 'v5.5' },
+                 { k: 'quality', v: '720p' }, { k: 'keyframe', v: '0ms' }],
       },
       ports: [
         { kind: 'video', side: 'left', top: 44, label: 'video' },
-        { kind: 'text',  side: 'left', top: 68, label: 'script' },
-        { kind: 'video', side: 'right', top: 58 },
+        { kind: 'image', side: 'left', top: 68, label: 'ref 1' },
+        { kind: 'image', side: 'left', top: 92, label: 'ref 2' },
+        { kind: 'text',  side: 'left', top: 116, label: 'prompt' },
+        { kind: 'video', side: 'right', top: 80 },
       ],
-      footer: { left: 'pixverse create speech', right: '— idle' },
+      footer: { left: 'pixverse create modify', right: '— idle' },
+    }),
+  },
+  { kind: 'cli', title: 'PixVerse · voice', group: 'PixVerse',
+    spawn: () => ({
+      kind: 'cli', title: 'PixVerse voice', w: 244, badge: 'cli · pixverse',
+      cli: {
+        bin: 'pixverse', cmd: 'pixverse',
+        args: ['create', 'voice', '--text', '{prompt}',
+               '--model', 'speech-2.8-hd', '--language', 'auto', '--speed', '1',
+               '--timeout', '300', '--json'],
+        fields: [{ k: 'mode', v: 'voice' }, { k: 'model', v: 'speech-2.8-hd' },
+                 { k: 'language', v: 'auto' }, { k: 'speed', v: '1×' }],
+      },
+      ports: [
+        { kind: 'text', side: 'left', top: 52, label: 'text' },
+        { kind: 'audio', side: 'right', top: 52 },
+      ],
+      footer: { left: 'pixverse create voice', right: '— idle' },
+    }),
+  },
+  { kind: 'cli', title: 'PixVerse · music', group: 'PixVerse',
+    spawn: () => ({
+      kind: 'cli', title: 'PixVerse music', w: 244, badge: 'cli · pixverse',
+      cli: {
+        bin: 'pixverse', cmd: 'pixverse',
+        args: ['create', 'music', '--prompt', '{prompt}', '--image', '{images}',
+               '--model', 'music-2.6', '--instrumental',
+               '--duration-seconds', '60', '--timeout', '300', '--json'],
+        fields: [{ k: 'mode', v: 'music' }, { k: 'model', v: 'music-2.6' },
+                 { k: 'duration', v: '60s' }, { k: 'lyrics', v: 'instrumental' }],
+      },
+      ports: [
+        // --image reference is only honoured by Google Lyria models
+        { kind: 'image', side: 'left', top: 44, label: 'ref · lyria' },
+        { kind: 'text', side: 'left', top: 68, label: 'prompt' },
+        { kind: 'audio', side: 'right', top: 58 },
+      ],
+      footer: { left: 'pixverse create music', right: '— idle' },
+    }),
+  },
+  { kind: 'cli', title: 'PixVerse · template', group: 'PixVerse',
+    spawn: () => ({
+      kind: 'cli', title: 'PixVerse template', w: 244, badge: 'cli · pixverse',
+      cli: {
+        bin: 'pixverse', cmd: 'pixverse',
+        args: ['create', 'template',
+               '--image', '{images}', '--video', '{video}', '--prompt', '{prompt}',
+               '--quality', '720p', '--count', '1', '--timeout', '600', '--json'],
+        fields: [{ k: 'mode', v: 'template' }, { k: 'template', v: 'required' },
+                 { k: 'quality', v: '720p' }],
+      },
+      ports: [
+        { kind: 'image', side: 'left', top: 44, label: 'img 1' },
+        { kind: 'image', side: 'left', top: 68, label: 'img 2' },
+        { kind: 'video', side: 'left', top: 92, label: 'video' },
+        { kind: 'text', side: 'left', top: 116, label: 'prompt' },
+        { kind: 'asset', side: 'right', top: 80 },
+      ],
+      footer: { left: 'pixverse create template', right: '— idle' },
     }),
   },
 
@@ -212,9 +282,9 @@ const NODE_TEMPLATES = [
       kind: 'cli', title: 'ffmpeg · compose', w: 244, badge: 'cli · local',
       cli: {
         bin: 'ffmpeg', cmd: 'ffmpeg',
-        args: ['connected videos', '-filter_complex concat', '-c:v libx264 -crf 18', '{out}.mp4'],
+        args: ['connected videos', '-filter_complex concat', '-c:v h264_videotoolbox (mpeg4 fallback)', '{out}.mp4'],
         fields: [{ k: 'in', v: 'multi' }, { k: 'mode', v: 'concat' },
-                 { k: 'crf', v: '18' }, { k: 'fps', v: '24' }],
+                 { k: 'codec', v: 'VideoToolbox / MPEG-4' }, { k: 'fps', v: '24' }],
       },
       ports: [
         { kind: 'video', side: 'left', top: 60, label: 'clips' },
@@ -240,7 +310,7 @@ const NODE_TEMPLATES = [
 // Replace `LocalStorage` with a Tauri / Electron file-system adapter later. The
 // shape stays the same; the editor never touches the impl directly.
 const LocalStorage = {
-  KEY: 'atlas.v1',
+  KEY: 'beatboard.v1',
   load() {
     try {
       const raw = localStorage.getItem(this.KEY);
@@ -265,10 +335,13 @@ function resultThumbs(result) {
   if (!result) return [];
   if (Array.isArray(result.thumbs)) return result.thumbs;
   const url = result.image_url || result.imageUrl || result.video_url || result.videoUrl ||
+    result.audio_url || result.audioUrl ||
     result.url || result.src || result.path || result.output || result.file ||
     result.file_path || result.filePath || result.local_path || result.localPath;
   const isVideo = !!(result.video_url || result.videoUrl) || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(String(url || ''));
-  return url ? [{ seed: url, url, label: isVideo ? 'video' : 'image', type: isVideo ? 'video' : 'image' }] : [];
+  const isAudio = !!(result.audio_url || result.audioUrl) || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(String(url || ''));
+  const type = isAudio ? 'audio' : isVideo ? 'video' : 'image';
+  return url ? [{ seed: url, url, label: type, type }] : [];
 }
 
 function sourceThumbs(dep) {
@@ -423,10 +496,10 @@ function makeInitialState() {
         openai: '', google: '', piapi: '', replicate: '', fal: '',
       },
       binPaths: {
-        ffmpeg: 'ffmpeg',
+        ffmpeg: '',
         'real-esrgan': '~/bin/realesrgan-ncnn-vulkan',
         rife: '~/bin/rife-ncnn-vulkan',
-        pixverse: 'pixverse',
+        pixverse: '',
         sh: 'sh',
       },
       defaultModel: 'flux.1-dev',
@@ -447,6 +520,7 @@ function makeInitialState() {
       runState: null,        // { current: nodeId, t: 0..1, order: [], results: {} }
       contextMenu: null,     // { x, y, target: { kind: 'node'|'edge', id|idx } }
       toast: null,
+      errorModal: null,      // { errors: [{ nodeId, title, error }] } — run-failure dialog
     },
   };
 }
@@ -531,27 +605,47 @@ function appReducer(state, action) {
         ...state,
         projects: state.projects.map(p =>
           p.id === action.projectId
-            ? { ...p, graph: normalizeGraphPorts(action.graph), modifiedAt: Date.now() }
+            ? { ...p, graph: normalizeGraphPorts(action.graph), runResults: {}, modifiedAt: Date.now() }
             : p),
         ui: { ...state.ui, selectedNodeId: null, selectedEdgeIdx: null },
       };
     }
 
     case 'PATCH_GRAPH': {
-      // Replace the active project's graph with a patched version.
-      // Also clear any stale runResults for newly added nodes so that recycled
-      // node IDs don't inherit results from a previously deleted node.
+      // Replace the active project's graph with a patched version. Execution-
+      // relevant node/edge changes invalidate that node and every solid-edge
+      // descendant, while layout/title-only changes preserve cached outputs.
       return {
         ...state,
         projects: state.projects.map(p => {
           if (p.id !== state.activeProjectId) return p;
-          const oldIds = new Set((p.graph?.nodes || []).map(n => n.id));
           const newGraph = normalizeGraphPorts(action.fn(p.graph));
-          const addedIds = (newGraph.nodes || []).map(n => n.id).filter(id => !oldIds.has(id));
-          const runResults = addedIds.length
-            ? Object.fromEntries(Object.entries(p.runResults || {}).filter(([id]) => !addedIds.includes(id)))
-            : (p.runResults || {});
-          return { ...p, graph: newGraph, runResults, modifiedAt: Date.now() };
+          if (action.preserveResults) {
+            return { ...p, graph: newGraph, runResults: p.runResults || {}, modifiedAt: Date.now() };
+          }
+          const invalidIds = executionInvalidationIds(p.graph, newGraph);
+          const graph = clearInvalidatedGraphOutputs(newGraph, invalidIds);
+          const runResults = invalidateGraphRunResults(newGraph, p.runResults || {}, invalidIds);
+          return { ...p, graph, runResults, modifiedAt: Date.now() };
+        }),
+      };
+    }
+    case 'CLEAR_RUN_RESULTS_FOR_NODES': {
+      const targetProjectId = action.projectId || state.activeProjectId;
+      const ids = new Set(action.nodeIds || []);
+      return {
+        ...state,
+        projects: state.projects.map(p => {
+          if (p.id !== targetProjectId || ids.size === 0) return p;
+          const runResults = Object.fromEntries(
+            Object.entries(p.runResults || {}).filter(([id]) => !ids.has(id))
+          );
+          const nodes = p.graph.nodes.map(n =>
+            ids.has(n.id) && n.kind !== 'asset' && n.kind !== 'prompt'
+              ? { ...n, thumbs: [], ...(n.kind === 'select' ? { selectedIndex: undefined } : {}) }
+              : n
+          );
+          return { ...p, runResults, graph: { ...p.graph, nodes } };
         }),
       };
     }
@@ -622,6 +716,14 @@ function isFfmpegCliNode(node) {
   return node?.kind === 'cli' && cmd === 'ffmpeg';
 }
 
+function pixVerseCliSubcommand(node) {
+  return isPixVerseCliNode(node) ? (node.cli?.args?.[1] || 'image') : '';
+}
+
+function isLegacyPixVerseSpeechNode(node) {
+  return pixVerseCliSubcommand(node) === 'speech';
+}
+
 function singleOutputPort(node, kind) {
   const firstRight = (node.ports || []).find(p => p.side === 'right');
   const label = firstRight?.label && firstRight.label.startsWith('·') ? undefined : firstRight?.label;
@@ -651,11 +753,11 @@ function normalizedNodePorts(node) {
   }
   if (isPixVerseCliNode(node)) {
     const args = node.cli?.args || [];
-    // args[1] is the subcommand (image, video, transition, reference, …)
-    // Everything except 'image' produces video output.
-    const VIDEO_SUBS = ['video','transition','reference','motion-control','extend','upscale','speech'];
+    // args[1] is the subcommand (image, video, transition, reference, …).
+    const VIDEO_SUBS = ['video','transition','reference','motion-control','extend','upscale','modify'];
+    const AUDIO_SUBS = ['voice','music'];
     const sub = args[1] || 'image';
-    const outKind = VIDEO_SUBS.includes(sub) ? 'video' : 'image';
+    const outKind = AUDIO_SUBS.includes(sub) ? 'audio' : VIDEO_SUBS.includes(sub) ? 'video' : sub === 'template' ? 'asset' : 'image';
     const left = (node.ports || []).filter(p => p.side === 'left');
     return [...left, singleOutputPort(node, outKind)];
   }
@@ -682,7 +784,40 @@ function firstPortIndex(ports, side) {
 function normalizeGraphPorts(graph) {
   if (!graph) return graph;
   const oldById = Object.fromEntries((graph.nodes || []).map(n => [n.id, n]));
-  const nodes = (graph.nodes || []).map(node => ({ ...node, ports: normalizedNodePorts(node) }));
+  const nodes = (graph.nodes || []).map(node => {
+    let migrated = node;
+    if (isLegacyPixVerseSpeechNode(node)) {
+      migrated = {
+        ...node,
+        title: 'PixVerse voice · migrated',
+        migrationNote: 'PixVerse CLI removed create speech; this node now generates standalone TTS audio.',
+        footer: { ...(node.footer || {}), left: 'pixverse create voice · migrated' },
+        cli: {
+          ...(node.cli || {}),
+          args: ['create', 'voice', '--text', '{prompt}', '--model', 'speech-2.8-hd',
+                 '--language', 'auto', '--speed', '1', '--timeout', '300', '--json'],
+          fields: [{ k: 'mode', v: 'voice' }, { k: 'model', v: 'speech-2.8-hd' },
+                   { k: 'migration', v: 'speech → voice' }],
+        },
+        ports: [
+          { kind: 'text', side: 'left', top: 52, label: 'text' },
+          { kind: 'audio', side: 'right', top: 52 },
+        ],
+      };
+    }
+    if (isFfmpegCliNode(node) && node.cli) {
+      const args = (node.cli.args || []).map(arg =>
+        String(arg).includes('libx264')
+          ? '-c:v h264_videotoolbox (mpeg4 fallback)'
+          : arg
+      );
+      const fields = (node.cli.fields || []).map(field =>
+        field.k === 'crf' ? { k: 'codec', v: 'VideoToolbox / MPEG-4' } : field
+      );
+      migrated = { ...node, cli: { ...node.cli, args, fields } };
+    }
+    return { ...migrated, ports: normalizedNodePorts(migrated) };
+  });
   const nextById = Object.fromEntries(nodes.map(n => [n.id, n]));
   const seen = new Set();
   const edges = [];
@@ -702,6 +837,13 @@ function normalizeGraphPorts(graph) {
     }
     if (oldTo?.kind === 'select') {
       toPort = firstPortIndex(nextTo.ports, 'left');
+    }
+    if (isLegacyPixVerseSpeechNode(oldTo)) {
+      const oldPort = oldTo.ports?.[edge.to.port];
+      // Preserve the script/prompt connection. The old source-video input has
+      // no equivalent because CLI 1.2+ removed lip-sync speech entirely.
+      if (oldPort?.kind !== 'text' && oldPort?.label !== 'script') return;
+      toPort = nextTo.ports.findIndex(p => p.side === 'left' && p.kind === 'text');
     }
     if (isFfmpegCliNode(oldTo)) {
       const oldPort = oldTo.ports?.[edge.to.port];
@@ -725,11 +867,155 @@ function normalizeGraphPorts(graph) {
   return { ...graph, nodes, edges };
 }
 
+function executionNodeSignature(node) {
+  if (!node) return '';
+  const {
+    x, y, w, title, badge, footer, state, progress,
+    ...executionFields
+  } = node;
+  // Generated previews are cached output, not node configuration. Asset
+  // thumbs are user inputs and therefore must participate in invalidation.
+  if (node.kind !== 'asset') delete executionFields.thumbs;
+  return JSON.stringify(executionFields);
+}
+
+function edgeExecutionKey(edge) {
+  return `${edge.from?.node}:${edge.from?.port}->${edge.to?.node}:${edge.to?.port}:${edge.dashed ? 'optional' : 'required'}`;
+}
+
+function executionInvalidationIds(oldGraph, newGraph) {
+  const invalid = new Set();
+  const oldNodes = new Map((oldGraph?.nodes || []).map(node => [node.id, node]));
+  const newNodes = new Map((newGraph?.nodes || []).map(node => [node.id, node]));
+
+  newNodes.forEach((node, id) => {
+    const oldNode = oldNodes.get(id);
+    if (!oldNode || executionNodeSignature(oldNode) !== executionNodeSignature(node)) invalid.add(id);
+  });
+  oldNodes.forEach((_, id) => {
+    if (!newNodes.has(id)) invalid.add(id);
+  });
+
+  const oldEdges = new Map((oldGraph?.edges || []).map(edge => [edgeExecutionKey(edge), edge]));
+  const newEdges = new Map((newGraph?.edges || []).map(edge => [edgeExecutionKey(edge), edge]));
+  oldEdges.forEach((edge, key) => {
+    if (!newEdges.has(key) && edge.to?.node) invalid.add(edge.to.node);
+  });
+  newEdges.forEach((edge, key) => {
+    if (!oldEdges.has(key) && edge.to?.node) invalid.add(edge.to.node);
+  });
+
+  // A changed input can make every previously cached downstream result stale.
+  [...invalid].forEach(id => {
+    if (oldNodes.has(id)) downstreamNodeIds(oldGraph, id, { includeDashed: true }).forEach(x => invalid.add(x));
+    if (newNodes.has(id)) downstreamNodeIds(newGraph, id, { includeDashed: true }).forEach(x => invalid.add(x));
+  });
+
+  return invalid;
+}
+
+function clearInvalidatedGraphOutputs(graph, invalidIds) {
+  if (!invalidIds?.size) return graph;
+  return {
+    ...graph,
+    nodes: graph.nodes.map(node => {
+      if (!invalidIds.has(node.id) || node.kind === 'asset' || node.kind === 'prompt') return node;
+      return {
+        ...node,
+        thumbs: [],
+        ...(node.kind === 'select' ? { selectedIndex: undefined } : {}),
+      };
+    }),
+  };
+}
+
+function invalidateGraphRunResults(graph, runResults, invalidIds) {
+  const nodeIds = new Set((graph?.nodes || []).map(node => node.id));
+  return Object.fromEntries(
+    Object.entries(runResults || {}).filter(([id]) => nodeIds.has(id) && !invalidIds.has(id))
+  );
+}
+
+function thumbHasUsableSource(thumb) {
+  if (!thumb) return false;
+  if (typeof thumb === 'string') {
+    const value = thumb.trim();
+    return !!value && (value.startsWith('/') || /^(https?:|data:|blob:|asset:|atlasmedia:)/i.test(value));
+  }
+  const value = thumb.path || thumb.local_path || thumb.localPath || thumb.file_path || thumb.filePath ||
+    thumb.file || thumb.output || thumb.url || thumb.src || thumb.image_url || thumb.imageUrl ||
+    thumb.video_url || thumb.videoUrl || thumb.audio_url || thumb.audioUrl || '';
+  const source = String(value || '').trim();
+  return !!source && (source.startsWith('/') || /^(https?:|data:|blob:|asset:|atlasmedia:)/i.test(source));
+}
+
+function usableResultThumbs(result) {
+  return resultThumbs(result).filter(thumbHasUsableSource);
+}
+
+// A node is ready for downstream use only after it produced a concrete value.
+// Prompt and Asset nodes are special roots: their edited text/local media is
+// already a usable value even before a run result exists.
+function nodeHasUsableOutput(node, result) {
+  if (!node) return false;
+  if (result?.state && result.state !== 'done') return false;
+  if (node.kind === 'prompt') return !!String(node.prompt || '').trim();
+  if (node.kind === 'asset') {
+    return usableResultThumbs(result).length > 0 || (node.thumbs || []).some(thumbHasUsableSource);
+  }
+  return result?.state === 'done' && usableResultThumbs(result).length > 0;
+}
+
+function dependencyReadiness(graph, nodeId, resultForNode) {
+  const dependencies = activeDepsForRun(graph, nodeId).map(edge => {
+    const source = nodeById(graph, edge.from.node);
+    const result = source && typeof resultForNode === 'function' ? resultForNode(source.id) : undefined;
+    const ready = nodeHasUsableOutput(source, result);
+    const state = result?.state || (ready ? 'done' : 'idle');
+    const reason = !source ? 'missing_node'
+      : state === 'error' ? 'error'
+      : state === 'blocked' ? 'blocked'
+      : state === 'queued' || state === 'waiting_dependencies' || state === 'waiting_user' || state === 'running' ? 'waiting'
+      : 'missing_output';
+    return { edge, source, result, ready, state, reason: ready ? null : reason };
+  });
+  return {
+    ok: dependencies.every(dep => dep.ready),
+    dependencies,
+    missing: dependencies.filter(dep => !dep.ready),
+  };
+}
+
+function nodeInputPortStatuses(graph, nodeId, resultForNode) {
+  const node = nodeById(graph, nodeId);
+  if (!node) return {};
+  const required = dependencyReadiness(graph, nodeId, resultForNode).dependencies;
+  const allIncoming = (graph.edges || []).filter(edge => edge.to.node === nodeId);
+  const statuses = {};
+  (node.ports || []).forEach((port, index) => {
+    if (port.side !== 'left') return;
+    const deps = required.filter(dep => dep.edge.to.port === index);
+    const optional = allIncoming.filter(edge => edge.to.port === index && edge.dashed);
+    if (!deps.length) {
+      statuses[index] = { state: optional.length ? 'optional' : 'unconnected', dependencies: [] };
+      return;
+    }
+    const failed = deps.find(dep => dep.state === 'error' || dep.state === 'blocked');
+    statuses[index] = {
+      state: failed ? 'blocked' : deps.every(dep => dep.ready) ? 'ready' : 'waiting',
+      dependencies: deps,
+    };
+  });
+  return statuses;
+}
+
 // Topological order (Kahn). Cycles are flagged as remaining unscheduled.
-function topoOrder(graph) {
+function topoOrder(graph, opts = {}) {
+  const includeDashed = opts.includeDashed !== false;
+  const edges = graph.edges.filter(edge => includeDashed || !edge.dashed);
   const indeg = {};
   graph.nodes.forEach(n => { indeg[n.id] = 0; });
-  graph.edges.forEach(e => {
+  edges.forEach(e => {
     if (indeg[e.to.node] != null) indeg[e.to.node] += 1;
   });
   const out = [];
@@ -737,7 +1023,7 @@ function topoOrder(graph) {
   while (q.length) {
     const id = q.shift();
     out.push(id);
-    graph.edges.filter(e => e.from.node === id).forEach(e => {
+    edges.filter(e => e.from.node === id).forEach(e => {
       indeg[e.to.node] -= 1;
       if (indeg[e.to.node] === 0) q.push(e.to.node);
     });
@@ -762,39 +1048,41 @@ function downstreamNodeIds(graph, startNodeId, opts = {}) {
 }
 
 function defaultRunNodeIds(graph) {
-  const incomingAny = new Set(graph.edges.map(e => e.to.node));
-  let roots = graph.nodes.filter(n => !incomingAny.has(n.id)).map(n => n.id);
-  if (roots.length === 0) {
-    const incomingSolid = new Set(graph.edges.filter(e => !e.dashed).map(e => e.to.node));
-    roots = graph.nodes.filter(n => !incomingSolid.has(n.id)).map(n => n.id);
-  }
-  const seen = new Set();
-  roots.forEach(id => downstreamNodeIds(graph, id, { includeDashed: false }).forEach(nodeId => seen.add(nodeId)));
-  return seen;
+  return new Set(graph.nodes.map(node => node.id));
 }
 
-function runOrderNodeIds(graph, startNodeId) {
-  const allOrder = topoOrder(graph);
+function runOrderNodeIds(graph, startNodeId, options = {}) {
+  const resultForNode = typeof options === 'function' ? options : options.getResult;
+  const allOrder = topoOrder(graph, { includeDashed: false });
   const included = startNodeId
     ? downstreamNodeIds(graph, startNodeId, { includeDashed: false })
     : defaultRunNodeIds(graph);
+
+  if (startNodeId) {
+    // Include every missing ancestor, including side inputs of downstream
+    // nodes. Ancestors with an already usable cached output can be reused.
+    const queue = [...included];
+    while (queue.length) {
+      const id = queue.shift();
+      activeDepsForRun(graph, id).forEach(edge => {
+        const source = nodeById(graph, edge.from.node);
+        const canReuse = typeof resultForNode === 'function' && nodeHasUsableOutput(source, resultForNode(source?.id));
+        if (canReuse || included.has(edge.from.node)) return;
+        included.add(edge.from.node);
+        queue.push(edge.from.node);
+      });
+    }
+  }
   return allOrder.filter(id => included.has(id));
 }
 
-function activeDepsForRun(graph, nodeId, startNodeId) {
-  return graph.edges.filter(e =>
-    e.to.node === nodeId &&
-    (
-      !e.dashed ||
-      (startNodeId && e.to.node === startNodeId) ||
-      nodeById(graph, e.from.node)?.kind === 'prompt'
-    )
-  );
+function activeDepsForRun(graph, nodeId) {
+  return graph.edges.filter(e => e.to.node === nodeId && !e.dashed);
 }
 
 // Validate a potential edge: type match + no duplicate + no cycle
 // Port kinds that are mutually compatible (media types can flow into each other)
-const MEDIA_KINDS = new Set(['image', 'video', 'file', 'asset']);
+const MEDIA_KINDS = new Set(['image', 'video', 'audio', 'file', 'asset']);
 function portKindsCompatible(a, b) {
   if (a === b) return true;
   if (MEDIA_KINDS.has(a) && MEDIA_KINDS.has(b)) return true; // image↔video, image↔file, etc.
@@ -841,5 +1129,6 @@ Object.assign(window, {
   nodeById, nodeDisplayWidth, normalizeGraphPorts, topoOrder, downstreamNodeIds, defaultRunNodeIds, runOrderNodeIds, activeDepsForRun, canConnect, makeNodeId,
   PROVIDER_LABEL,
   // Thumb helpers — exported so editor.jsx can reuse without duplicating
-  resultThumbs, sourceThumbs, upstreamThumbs,
+  resultThumbs, sourceThumbs, upstreamThumbs, thumbHasUsableSource, usableResultThumbs,
+  nodeHasUsableOutput, dependencyReadiness, nodeInputPortStatuses,
 });

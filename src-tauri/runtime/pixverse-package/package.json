@@ -1,0 +1,9 @@
+{
+  "name": "beatboard-managed-pixverse-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned PixVerse CLI runtime managed by Beatboard",
+  "dependencies": {
+    "pixverse": "1.2.10"
+  }
+}

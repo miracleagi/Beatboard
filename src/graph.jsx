@@ -14,12 +14,13 @@ const PORT_COLORS = {
   text:   '#c98ad9',
   image:  '#7fc8ff',
   video:  '#f4c47a',
+  audio:  '#d7a6ff',
   number: '#8ed4a8',
   file:   '#9aa9c2',
   asset:  '#e5917a',
 };
 
-const PORT_LABEL = { text: 'txt', image: 'img', video: 'vid', number: 'num', file: 'file', asset: 'ast' };
+const PORT_LABEL = { text: 'txt', image: 'img', video: 'vid', audio: 'aud', number: 'num', file: 'file', asset: 'ast' };
 
 // ---------- EDGE PATHS ----------
 function edgePath(style, from, to, dir = 'h') {

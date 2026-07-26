@@ -93,7 +93,7 @@ function App() {
       <DesignCanvas>
         <DCSection
           id="prototype"
-          title="Atlas · Pipeline — interactive prototype"
+          title="Beatboard · canvas — interactive prototype"
           subtitle="Drag asset chips from the left tray onto the canvas. Click any node to inspect. Double-click a CLI node to expand its command editor. Hit Run graph to watch progress sweep through."
         >
           <DCArtboard id="proto-main" label="Main · 1440 × 900 · interactive" width={1440} height={900}>

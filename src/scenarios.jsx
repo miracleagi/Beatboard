@@ -18,10 +18,10 @@ const SCENARIO_ITERATE = {
       id: 'pv0', kind: 'cli', title: 'PixVerse image', x: 280, y: 110, w: 244, badge: 'cli · pixverse',
       cli: {
         bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'image', '--prompt', '{prompt}', '--image', '{image}', '--model', 'qwen-image',
+        args: ['create', 'image', '--prompt', '{prompt}', '--image', '{image}', '--model', 'gpt-image-2.0',
                '--quality', '1080p', '--aspect-ratio', '16:9', '--count', '1',
                '--timeout', '300', '--json'],
-        fields: [{ k: 'mode', v: 'T2I/I2I' }, { k: 'model', v: 'qwen-image' },
+        fields: [{ k: 'mode', v: 'T2I/I2I' }, { k: 'model', v: 'gpt-image-2.0' },
                  { k: 'quality', v: '1080p' }, { k: 'ratio', v: '16:9' }],
       },
       ports: [
@@ -72,10 +72,10 @@ const SCENARIO_BATCH = {
       id: 'pv_img', kind: 'cli', title: 'PixVerse image', x: 280, y: 110, w: 244, badge: 'cli · pixverse',
       cli: {
         bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'image', '--prompt', '{prompt}', '--image', '{image}', '--model', 'qwen-image',
+        args: ['create', 'image', '--prompt', '{prompt}', '--image', '{image}', '--model', 'gpt-image-2.0',
                '--quality', '1080p', '--aspect-ratio', '16:9', '--count', '1',
                '--timeout', '300', '--json'],
-        fields: [{ k: 'mode', v: 'T2I/I2I' }, { k: 'model', v: 'qwen-image' },
+        fields: [{ k: 'mode', v: 'T2I/I2I' }, { k: 'model', v: 'gpt-image-2.0' },
                  { k: 'quality', v: '1080p' }, { k: 'ratio', v: '16:9' }],
       },
       ports: [
@@ -136,7 +136,7 @@ const SCENARIO_ASSEMBLY = {
       id: 'img1', kind: 'cli', title: 'PixVerse image', x: 280, y: 40, w: 244, badge: 'cli · pixverse',
       cli: {
         bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'image', '--prompt', '{prompt}', '--image', '{image}', '--model', 'qwen-image',
+        args: ['create', 'image', '--prompt', '{prompt}', '--image', '{image}', '--model', 'gpt-image-2.0',
                '--quality', '1080p', '--aspect-ratio', '16:9', '--count', '1',
                '--timeout', '300', '--json'],
         fields: [{ k: 'mode', v: 'T2I/I2I' }, { k: 'ratio', v: '16:9' }],
@@ -176,7 +176,7 @@ const SCENARIO_ASSEMBLY = {
       id: 'img2', kind: 'cli', title: 'PixVerse image', x: 280, y: 270, w: 244, badge: 'cli · pixverse',
       cli: {
         bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'image', '--prompt', '{prompt}', '--image', '{image}', '--model', 'qwen-image',
+        args: ['create', 'image', '--prompt', '{prompt}', '--image', '{image}', '--model', 'gpt-image-2.0',
                '--quality', '1080p', '--aspect-ratio', '16:9', '--count', '1',
                '--timeout', '300', '--json'],
         fields: [{ k: 'mode', v: 'T2I/I2I' }, { k: 'ratio', v: '16:9' }],
@@ -210,9 +210,9 @@ const SCENARIO_ASSEMBLY = {
       id: 'ff', kind: 'cli', title: 'ffmpeg · compose', x: 860, y: 160, w: 244, badge: 'cli · local',
       cli: {
         bin: 'ffmpeg', cmd: 'ffmpeg',
-        args: ['connected videos', '-filter_complex concat', '-c:v libx264 -crf 18'],
+        args: ['connected videos', '-filter_complex concat', '-c:v h264_videotoolbox (mpeg4 fallback)'],
         fields: [{ k: 'in', v: 'multi' }, { k: 'mode', v: 'concat' },
-                 { k: 'crf', v: '18' }, { k: 'fps', v: '24' }],
+                 { k: 'codec', v: 'VideoToolbox / MPEG-4' }, { k: 'fps', v: '24' }],
       },
       ports: [
         { kind: 'video', side: 'left', top: 60, label: 'clips' },

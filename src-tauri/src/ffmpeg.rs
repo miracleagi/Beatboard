@@ -1,12 +1,12 @@
 // ffmpeg execution: collect video inputs, localize remote URLs, build concat filter, run.
 
+use crate::runtime::resolve_ffmpeg;
 use crate::storage::runs_dir;
-use crate::utils::{expand_tilde, find_bin, npm_augmented_path, percent_decode};
+use crate::utils::{expand_tilde, percent_decode};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tauri::{AppHandle, Window};
-use tokio::process::Command;
 
 // ─── Input collection ────────────────────────────────────────────────────────
 
@@ -33,11 +33,14 @@ fn collect_video_inputs(deps: &[Value]) -> Vec<String> {
                     let is_vid = thumb.get("type").and_then(|t| t.as_str()) == Some("video");
                     // Pick ONE value per thumb: prefer local path, then url, then aliases.
                     // This avoids double-counting a thumb that has both path and url set.
-                    let value = ["path", "url", "video_url", "videoUrl"].iter().find_map(|&key| {
-                        thumb.get(key).and_then(|v| v.as_str()).filter(|s| {
-                            !s.is_empty() && (is_vid || is_video_ext(s))
-                        })
-                    });
+                    let value = ["path", "url", "video_url", "videoUrl"]
+                        .iter()
+                        .find_map(|&key| {
+                            thumb
+                                .get(key)
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty() && (is_vid || is_video_ext(s)))
+                        });
                     if let Some(s) = value {
                         values.push(s.to_string());
                     }
@@ -48,7 +51,10 @@ fn collect_video_inputs(deps: &[Value]) -> Vec<String> {
 
     // Deduplicate while preserving order
     let mut seen = std::collections::HashSet::new();
-    values.into_iter().filter(|v| seen.insert(v.clone())).collect()
+    values
+        .into_iter()
+        .filter(|v| seen.insert(v.clone()))
+        .collect()
 }
 
 // ─── Input localization ───────────────────────────────────────────────────────
@@ -103,8 +109,16 @@ async fn localize_input(
     // Download remote URL
     let ext = {
         let p = url.split('?').next().unwrap_or("").to_lowercase();
-        let e = p.rsplit('.').next().map(|s| format!(".{s}")).unwrap_or_default();
-        if [".mp4", ".mov", ".webm", ".m4v"].contains(&e.as_str()) { e } else { ".mp4".to_string() }
+        let e = p
+            .rsplit('.')
+            .next()
+            .map(|s| format!(".{s}"))
+            .unwrap_or_default();
+        if [".mp4", ".mov", ".webm", ".m4v"].contains(&e.as_str()) {
+            e
+        } else {
+            ".mp4".to_string()
+        }
     };
     let out_path = dir.join(format!(
         "{prefix}-{}.{}",
@@ -120,7 +134,10 @@ async fn localize_input(
     }
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
     std::fs::write(&out_path, bytes).map_err(|e| e.to_string())?;
-    out_path.to_str().map(String::from).ok_or_else(|| "Invalid path".to_string())
+    out_path
+        .to_str()
+        .map(String::from)
+        .ok_or_else(|| "Invalid path".to_string())
 }
 
 // ─── Filter builder ───────────────────────────────────────────────────────────
@@ -139,11 +156,17 @@ fn canvas_size(node: &Value) -> (u32, u32) {
     }
 }
 
-/// Build the full ffmpeg argument list: scale/pad/fps/format per input, concat, libx264 output.
-fn build_concat_args(node: &Value, inputs: &[String], out: &Path) -> Vec<String> {
+/// Build the concat command. VideoToolbox is preferred, with FFmpeg's LGPL
+/// MPEG-4 encoder available as a software fallback when macOS cannot create a
+/// hardware compression session (remote sessions and busy encoders can do so).
+fn build_concat_args(
+    node: &Value,
+    inputs: &[String],
+    out: &Path,
+    videotoolbox: bool,
+) -> Vec<String> {
     let (w, h) = canvas_size(node);
     let fps = 24u32;
-    let crf = 18u32;
 
     let mut filters: Vec<String> = inputs
         .iter()
@@ -169,12 +192,25 @@ fn build_concat_args(node: &Value, inputs: &[String], out: &Path) -> Vec<String>
         "-map".to_string(),
         "[v]".to_string(),
         "-an".to_string(),
-        "-c:v".to_string(),
-        "libx264".to_string(),
-        "-crf".to_string(),
-        crf.to_string(),
-        "-preset".to_string(),
-        "medium".to_string(),
+    ]);
+    if videotoolbox {
+        args.extend_from_slice(&[
+            "-c:v".to_string(),
+            "h264_videotoolbox".to_string(),
+            "-allow_sw".to_string(),
+            "1".to_string(),
+            "-q:v".to_string(),
+            "65".to_string(),
+        ]);
+    } else {
+        args.extend_from_slice(&[
+            "-c:v".to_string(),
+            "mpeg4".to_string(),
+            "-q:v".to_string(),
+            "3".to_string(),
+        ]);
+    }
+    args.extend_from_slice(&[
         "-movflags".to_string(),
         "+faststart".to_string(),
         out.to_str().unwrap_or("out.mp4").to_string(),
@@ -192,22 +228,19 @@ pub async fn run_ffmpeg(
     config: Value,
     run_id: String,
 ) -> Result<Value, String> {
-    let bin_raw = config
-        .get("binPaths")
-        .and_then(|b| b.get("ffmpeg"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("ffmpeg");
-    let bin = find_bin(&expand_tilde(bin_raw));
+    let runtime = resolve_ffmpeg(&app, &config);
 
     let raw_inputs = collect_video_inputs(&deps);
-    let node_id = node.get("id").and_then(|v| v.as_str()).unwrap_or("ff").to_string();
+    let node_id = node
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ff")
+        .to_string();
 
     if raw_inputs.len() < 2 {
-        return Err(
-            "ffmpeg node needs at least two rendered video inputs. \
+        return Err("ffmpeg node needs at least two rendered video inputs. \
              Run upstream video nodes first."
-                .to_string(),
-        );
+            .to_string());
     }
 
     let _ = window.emit(&format!("progress:{run_id}"), 0.05f64);
@@ -223,7 +256,13 @@ pub async fn run_ffmpeg(
         .as_millis();
     let safe_id: String = node_id
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     let prefix = format!("{safe_id}-{ts}");
 
@@ -237,20 +276,35 @@ pub async fn run_ffmpeg(
     }
 
     let out_path = ff_dir.join(format!("{prefix}.mp4"));
-    let args = build_concat_args(&node, &local_inputs, &out_path);
+    let args = build_concat_args(&node, &local_inputs, &out_path, true);
 
     let _ = window.emit(&format!("progress:{run_id}"), 0.5f64);
 
-    let output = Command::new(&bin)
-        .env("PATH", npm_augmented_path())
-        .args(&args)
+    let mut output = runtime
+        .command(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to start ffmpeg: {e}. Is it installed?"))?
+        .map_err(|e| format!("Failed to start ffmpeg: {e}. Reinstall Beatboard or choose a custom binary in Advanced settings."))?
         .wait_with_output()
         .await
         .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        // VideoToolbox can be unavailable in remote/headless sessions or while
+        // another process holds the encoder. Retry with FFmpeg's LGPL software
+        // MPEG-4 encoder so composition remains functional.
+        let fallback_args = build_concat_args(&node, &local_inputs, &out_path, false);
+        output = runtime
+            .command(&fallback_args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to start ffmpeg fallback: {e}"))?
+            .wait_with_output()
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();

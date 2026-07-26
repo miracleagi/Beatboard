@@ -16,7 +16,10 @@ const MCP_NODE_TYPES = {
   motion_control: 'PixVerse · motion control',
   extend: 'PixVerse · extend',
   upscale: 'PixVerse · upscale',
-  speech: 'PixVerse · speech',
+  modify: 'PixVerse · modify',
+  voice: 'PixVerse · voice',
+  music: 'PixVerse · music',
+  template: 'PixVerse · template',
   pick: 'Pick · manual',
   ffmpeg_compose: 'ffmpeg · compose',
   output: 'Output',
@@ -29,13 +32,63 @@ const MCP_CLI_FLAGS = {
   aspect_ratio: '--aspect-ratio',
   duration: '--duration',
   count: '--count',
+  seed: '--seed',
   timeout: '--timeout',
+  detail_level: '--detail-level',
+  keyframe_time: '--keyframe-time',
+  duration_seconds: '--duration-seconds',
+  lyrics: '--lyrics',
+  voice_id: '--voice-id',
+  provider_voice_id: '--provider-voice-id',
+  language: '--language',
+  stability: '--stability',
+  similarity_boost: '--similarity-boost',
+  style: '--style',
+  speed: '--speed',
+  volume: '--volume',
+  pitch: '--pitch',
+  emotion: '--emotion',
+  client_request_id: '--client-request-id',
+  idempotency_key: '--idempotency-key',
+  template_id: '--template-id',
+  output: '--output',
+};
+
+const MCP_CLI_TOGGLES = {
+  audio: ['--audio', '--no-audio', true],
+  multi_shot: ['--multi-shot', '--no-multi-shot', true],
+  off_peak: ['--off-peak'],
+  instrumental: ['--instrumental', '--auto-lyrics'],
+  auto_lyrics: ['--auto-lyrics', '--instrumental'],
+  no_duration_auto: ['--no-duration-auto'],
+  use_speaker_boost: ['--use-speaker-boost', '--no-use-speaker-boost', true],
+  no_wait: ['--no-wait'],
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function mcpActiveProject(state) {
   return state.projects.find(p => p.id === state.activeProjectId) || state.projects[0];
+}
+
+function mcpProjectSummary(project, activeProjectId) {
+  return {
+    id: project.id,
+    name: project.name,
+    color: project.color,
+    output_dir: project.outputDir || '',
+    node_count: project.graph?.nodes?.length || 0,
+    edge_count: project.graph?.edges?.length || 0,
+    modified_at: project.modifiedAt || null,
+    active: project.id === activeProjectId,
+  };
+}
+
+function mcpProjectMutationError() {
+  const runner = window.AtlasRunner;
+  return runner?.state?.active
+    ? 'cannot create, switch, or delete projects while a graph run is active'
+    : null;
 }
 
 // Give React a beat to flush the dispatched update before we reply (the next
@@ -67,7 +120,8 @@ function mcpNodeType(node) {
       return {
         'image': 'image', 'video': 'video', 'transition': 'transition',
         'reference': 'reference', 'motion-control': 'motion_control',
-        'extend': 'extend', 'upscale': 'upscale', 'speech': 'speech',
+        'extend': 'extend', 'upscale': 'upscale', 'modify': 'modify',
+        'voice': 'voice', 'music': 'music', 'template': 'template',
       }[sub] || 'image';
     }
     return 'cli';
@@ -80,7 +134,7 @@ function mcpThumbOutputs(result) {
   const thumbs = Array.isArray(result?.thumbs) ? result.thumbs : [];
   return thumbs
     .map(t => ({
-      type: t.type === 'video' ? 'video' : 'image',
+      type: t.type === 'audio' ? 'audio' : t.type === 'video' ? 'video' : 'image',
       path: mcpLocalPath(t.path || t.local_path || t.localPath || t.url || ''),
       ...(t.id ? { cloud_id: t.id } : {}),
       ...(t.chosen ? { chosen: true } : {}),
@@ -126,12 +180,13 @@ function mcpApplyParams(node, params) {
   }
   if (n.kind === 'asset' && typeof p.path === 'string' && p.path.startsWith('/')) {
     const isVideo = /\.(mp4|mov|webm|m4v)$/i.test(p.path);
+    const isAudio = /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(p.path);
     const label = p.path.split('/').pop();
     n.thumbs = [{
       path: p.path,
       url: `atlasmedia://localhost/${encodeURIComponent(p.path)}`,
       label,
-      type: isVideo ? 'video' : 'image',
+      type: isAudio ? 'audio' : isVideo ? 'video' : 'image',
       seed: p.path,
     }];
     if (!p.title) n.title = label;
@@ -156,6 +211,17 @@ function mcpApplyParams(node, params) {
       const field = fields.find(f => f.k === fieldKey);
       if (field) field.v = value;
     }
+    for (const [key, flags] of Object.entries(MCP_CLI_TOGGLES)) {
+      if (typeof p[key] !== 'boolean') continue;
+      const [flag, opposite, emitOppositeWhenFalse] = flags;
+      let nextArgs = args.filter(a => a !== flag && (!opposite || a !== opposite));
+      const selected = p[key] ? flag : emitOppositeWhenFalse ? opposite : null;
+      if (selected) {
+        const j = nextArgs.indexOf('--json');
+        nextArgs.splice(j >= 0 ? j : nextArgs.length, 0, selected);
+      }
+      args.splice(0, args.length, ...nextArgs);
+    }
     n.cli = { ...n.cli, args, fields };
   }
   return n;
@@ -163,13 +229,105 @@ function mcpApplyParams(node, params) {
 
 // ─── Tool handlers ───────────────────────────────────────────────────────────
 
+function mcpListProjects(stateRef) {
+  const state = stateRef.current;
+  return {
+    active_project_id: state.activeProjectId || null,
+    projects: (state.projects || []).map(project => mcpProjectSummary(project, state.activeProjectId)),
+  };
+}
+
+async function mcpCreateProject(args, stateRef, dispatch) {
+  const mutationError = mcpProjectMutationError();
+  if (mutationError) return { error: mutationError };
+
+  const name = typeof args.name === 'string' && args.name.trim()
+    ? args.name.trim().slice(0, 120)
+    : 'Untitled';
+  const color = typeof args.color === 'string' && /^#[0-9a-f]{6}$/i.test(args.color)
+    ? args.color
+    : '#7fc8ff';
+  const outputDir = typeof args.output_dir === 'string' ? args.output_dir.trim() : '';
+  if (outputDir && !outputDir.startsWith('/')) {
+    return { error: 'output_dir must be an absolute local directory path' };
+  }
+
+  dispatch({
+    type: 'NEW_PROJECT',
+    name,
+    color,
+    outputDir,
+    graph: { nodes: [], edges: [] },
+  });
+  await mcpFlush();
+  const state = stateRef.current;
+  const project = mcpActiveProject(state);
+  if (!project) return { error: 'project creation did not complete' };
+  return {
+    ok: true,
+    project: mcpProjectSummary(project, state.activeProjectId),
+    note: 'the new blank project is now active',
+  };
+}
+
+async function mcpSwitchProject(args, stateRef, dispatch) {
+  const mutationError = mcpProjectMutationError();
+  if (mutationError) return { error: mutationError };
+
+  const state = stateRef.current;
+  const project = (state.projects || []).find(item => item.id === args.project_id);
+  if (!project) {
+    return { error: `project "${args.project_id || ''}" not found — call list_projects first` };
+  }
+  if (project.id !== state.activeProjectId) {
+    dispatch({ type: 'SWITCH_PROJECT', id: project.id });
+    await mcpFlush();
+  }
+  const nextState = stateRef.current;
+  return {
+    ok: true,
+    project: mcpProjectSummary(project, nextState.activeProjectId),
+  };
+}
+
+async function mcpDeleteProject(args, stateRef, dispatch) {
+  const mutationError = mcpProjectMutationError();
+  if (mutationError) return { error: mutationError };
+
+  const state = stateRef.current;
+  const projects = state.projects || [];
+  const project = projects.find(item => item.id === args.project_id);
+  if (!project) {
+    return { error: `project "${args.project_id || ''}" not found — call list_projects first` };
+  }
+  if (args.confirm !== true) {
+    return { error: 'delete_project requires confirm=true' };
+  }
+  if (projects.length <= 1) {
+    return { error: 'cannot delete the last canvas project; create another project first' };
+  }
+
+  dispatch({ type: 'CLOSE_PROJECT', id: project.id });
+  await mcpFlush();
+  const nextState = stateRef.current;
+  const active = mcpActiveProject(nextState);
+  return {
+    ok: true,
+    deleted_project: { id: project.id, name: project.name },
+    active_project: active ? mcpProjectSummary(active, nextState.activeProjectId) : null,
+    note: 'the Beatboard project was removed; generated media files on disk were not deleted',
+  };
+}
+
 function mcpGetGraph(stateRef) {
   const proj = mcpActiveProject(stateRef.current);
   if (!proj) return { error: 'no active project' };
   const runner = window.AtlasRunner;
   const persisted = proj.runResults || {};
   return {
+    project_id: proj.id,
     project: proj.name,
+    output_dir: proj.outputDir || '',
     run_active: !!(runner && runner.state.active),
     nodes: proj.graph.nodes.map(n => {
       const live = runner && runner.state.active ? runner.state.results[n.id] : null;
@@ -308,7 +466,9 @@ async function mcpRunNode(args, stateRef) {
     startId = args.node_id;
   }
   const proj = mcpActiveProject(stateRef.current);
-  const order = runOrderNodeIds(proj.graph, startId);
+  const order = runOrderNodeIds(proj.graph, startId, {
+    getResult: id => (proj.runResults || {})[id],
+  });
   if (!order.length) return { error: 'nothing to run — the graph is empty' };
   runner.start(startId); // fire and forget; agent polls get_node_result
   return {
@@ -329,7 +489,7 @@ async function mcpGetNodeResult(args, stateRef) {
       node_id: args.node_id,
       state: 'waiting_for_pick',
       candidates: waiting.candidates.length,
-      note: 'run paused — the user must click a thumbnail in the Atlas window',
+      note: 'run paused — the user must click a thumbnail in the Beatboard window',
     };
   }
 
@@ -344,7 +504,7 @@ async function mcpGetNodeResult(args, stateRef) {
     node_id: args.node_id,
     state,
     ...(state === 'running' ? { progress: Math.round((result.progress || 0) * 100) / 100 } : {}),
-    ...(state === 'error' ? { error: result.error } : {}),
+    ...(state === 'error' || state === 'blocked' ? { error: result.error, blocked_by: result.blockedBy } : {}),
     ...(state === 'done' ? { outputs: mcpThumbOutputs(result) } : {}),
     run_active: !!(runner && runner.state.active),
   };
@@ -361,6 +521,10 @@ function useMcpBridge({ stateRef, dispatch }) {
     let disposed = false;
 
     const HANDLERS = {
+      list_projects: args => mcpListProjects(stateRef),
+      create_project: args => mcpCreateProject(args, stateRef, dispatch),
+      switch_project: args => mcpSwitchProject(args, stateRef, dispatch),
+      delete_project: args => mcpDeleteProject(args, stateRef, dispatch),
       get_graph: args => mcpGetGraph(stateRef),
       add_node: args => mcpAddNode(args, stateRef, dispatch),
       connect_nodes: args => mcpConnectNodes(args, stateRef, dispatch),
