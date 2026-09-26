@@ -1,0 +1,132 @@
+{
+  "image.generate": {
+    "title": "Generate image",
+    "group": "Image",
+    "output": "image",
+    "ports": [
+      { "kind": "image", "top": 44, "label": "img 1", "slot": "images" },
+      { "kind": "image", "top": 68, "label": "img 2", "slot": "images" },
+      { "kind": "text", "top": 92, "label": "prompt", "slot": "prompt" }
+    ],
+    "output_top": 68,
+    "aliases": ["image"]
+  },
+  "video.generate": {
+    "title": "Generate video",
+    "group": "Video",
+    "output": "video",
+    "ports": [
+      { "kind": "image", "top": 44, "label": "src", "slot": "image" },
+      { "kind": "text", "top": 68, "label": "prompt", "slot": "prompt" }
+    ],
+    "output_top": 58,
+    "aliases": ["video"]
+  },
+  "video.transition": {
+    "title": "Transition",
+    "group": "Video",
+    "output": "video",
+    "ports": [
+      { "kind": "image", "top": 44, "label": "frame 1", "slot": "frames" },
+      { "kind": "image", "top": 68, "label": "frame 2", "slot": "frames" },
+      { "kind": "image", "top": 92, "label": "frame 3", "slot": "frames" },
+      { "kind": "text", "top": 116, "label": "prompt", "slot": "prompt" }
+    ],
+    "output_top": 80,
+    "aliases": ["transition"]
+  },
+  "video.reference": {
+    "title": "Reference to video",
+    "group": "Video",
+    "output": "video",
+    "ports": [
+      { "kind": "image", "top": 44, "label": "img 1", "slot": "images" },
+      { "kind": "image", "top": 68, "label": "img 2", "slot": "images" },
+      { "kind": "image", "top": 92, "label": "img 3", "slot": "images" },
+      { "kind": "video", "top": 116, "label": "vid ref", "slot": "videos" },
+      { "kind": "audio", "top": 140, "label": "aud ref", "slot": "audios" },
+      { "kind": "text", "top": 164, "label": "prompt", "slot": "prompt" }
+    ],
+    "output_top": 104,
+    "aliases": ["reference"]
+  },
+  "video.motion_control": {
+    "title": "Motion control",
+    "group": "Video",
+    "output": "video",
+    "ports": [
+      { "kind": "image", "top": 44, "label": "char", "slot": "character" },
+      { "kind": "video", "top": 68, "label": "motion", "slot": "motion" }
+    ],
+    "output_top": 58,
+    "aliases": ["motion_control"]
+  },
+  "video.extend": {
+    "title": "Extend video",
+    "group": "Video",
+    "output": "video",
+    "ports": [
+      { "kind": "video", "top": 44, "label": "video", "slot": "video" },
+      { "kind": "text", "top": 68, "label": "prompt", "slot": "prompt" }
+    ],
+    "output_top": 58,
+    "aliases": ["extend"]
+  },
+  "video.upscale": {
+    "title": "Upscale video",
+    "group": "Video",
+    "output": "video",
+    "ports": [
+      { "kind": "video", "top": 52, "label": "video", "slot": "video" }
+    ],
+    "output_top": 52,
+    "aliases": ["upscale"]
+  },
+  "video.modify": {
+    "title": "Modify video",
+    "group": "Video",
+    "output": "video",
+    "ports": [
+      { "kind": "video", "top": 44, "label": "video", "slot": "video" },
+      { "kind": "image", "top": 68, "label": "ref 1", "slot": "images" },
+      { "kind": "image", "top": 92, "label": "ref 2", "slot": "images" },
+      { "kind": "text", "top": 116, "label": "prompt", "slot": "prompt" }
+    ],
+    "output_top": 80,
+    "aliases": ["modify"]
+  },
+  "audio.speech": {
+    "title": "Voice (TTS)",
+    "group": "Audio",
+    "output": "audio",
+    "ports": [
+      { "kind": "text", "top": 52, "label": "text", "slot": "text" }
+    ],
+    "output_top": 52,
+    "aliases": ["voice"]
+  },
+  "audio.music": {
+    "title": "Music",
+    "group": "Audio",
+    "output": "audio",
+    "ports": [
+      { "kind": "image", "top": 44, "label": "ref · lyria", "slot": "image" },
+      { "kind": "text", "top": 68, "label": "prompt", "slot": "prompt" }
+    ],
+    "output_top": 58,
+    "aliases": ["music"]
+  },
+  "provider.template": {
+    "title": "Template / effect",
+    "group": "Effects",
+    "output": "asset",
+    "ports": [
+      { "kind": "image", "top": 44, "label": "img 1", "slot": "images" },
+      { "kind": "image", "top": 68, "label": "img 2", "slot": "images" },
+      { "kind": "video", "top": 92, "label": "video", "slot": "video" },
+      { "kind": "text", "top": 116, "label": "prompt", "slot": "prompt" }
+    ],
+    "output_top": 80,
+    "aliases": ["template"]
+  }
+}

@@ -1,0 +1,842 @@
+{
+ "note": "Frozen copy of the PixVerse palette templates before P1 (kind:cli argv nodes). Used as migration input and as the reference argv for newly spawned task nodes.",
+ "templates": [
+  {
+   "title": "PixVerse · image",
+   "node": {
+    "id": "tpl2",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse image",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "image",
+      "--prompt",
+      "{prompt}",
+      "--images",
+      "{images}",
+      "--model",
+      "gpt-image-2.0",
+      "--quality",
+      "1080p",
+      "--aspect-ratio",
+      "16:9",
+      "--count",
+      "1",
+      "--timeout",
+      "300",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "T2I/I2I"
+      },
+      {
+       "k": "model",
+       "v": "gpt-image-2.0"
+      },
+      {
+       "k": "quality",
+       "v": "1080p"
+      },
+      {
+       "k": "ratio",
+       "v": "16:9"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 44,
+      "label": "img 1"
+     },
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 68,
+      "label": "img 2"
+     },
+     {
+      "kind": "text",
+      "side": "left",
+      "top": 92,
+      "label": "prompt"
+     },
+     {
+      "kind": "image",
+      "side": "right",
+      "top": 68
+     }
+    ],
+    "footer": {
+     "left": "pixverse create image",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · video",
+   "node": {
+    "id": "tpl3",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse video",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "video",
+      "--prompt",
+      "{prompt}",
+      "--image",
+      "{image}",
+      "--model",
+      "v6",
+      "--duration",
+      "5",
+      "--quality",
+      "720p",
+      "--aspect-ratio",
+      "16:9",
+      "--count",
+      "1",
+      "--timeout",
+      "600",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "T2V/I2V"
+      },
+      {
+       "k": "model",
+       "v": "v6"
+      },
+      {
+       "k": "duration",
+       "v": "5s"
+      },
+      {
+       "k": "ratio",
+       "v": "16:9"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 44,
+      "label": "src"
+     },
+     {
+      "kind": "text",
+      "side": "left",
+      "top": 68,
+      "label": "prompt"
+     },
+     {
+      "kind": "video",
+      "side": "right",
+      "top": 58
+     }
+    ],
+    "footer": {
+     "left": "pixverse create video",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · transition",
+   "node": {
+    "id": "tpl4",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse transition",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "transition",
+      "--images",
+      "{images}",
+      "--prompt",
+      "{prompt}",
+      "--model",
+      "v6",
+      "--quality",
+      "720p",
+      "--timeout",
+      "600",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "transition · keyframes"
+      },
+      {
+       "k": "model",
+       "v": "v6"
+      },
+      {
+       "k": "quality",
+       "v": "720p"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 44,
+      "label": "frame 1"
+     },
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 68,
+      "label": "frame 2"
+     },
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 92,
+      "label": "frame 3"
+     },
+     {
+      "kind": "text",
+      "side": "left",
+      "top": 116,
+      "label": "prompt"
+     },
+     {
+      "kind": "video",
+      "side": "right",
+      "top": 80
+     }
+    ],
+    "footer": {
+     "left": "pixverse create transition",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · reference",
+   "node": {
+    "id": "tpl5",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse reference",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "reference",
+      "--images",
+      "{images}",
+      "--videos",
+      "{videos}",
+      "--audios",
+      "{audios}",
+      "--prompt",
+      "{prompt}",
+      "--model",
+      "v6",
+      "--quality",
+      "720p",
+      "--aspect-ratio",
+      "16:9",
+      "--timeout",
+      "600",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "reference"
+      },
+      {
+       "k": "model",
+       "v": "v6"
+      },
+      {
+       "k": "quality",
+       "v": "720p"
+      },
+      {
+       "k": "ratio",
+       "v": "16:9"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 44,
+      "label": "img 1"
+     },
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 68,
+      "label": "img 2"
+     },
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 92,
+      "label": "img 3"
+     },
+     {
+      "kind": "video",
+      "side": "left",
+      "top": 116,
+      "label": "vid ref"
+     },
+     {
+      "kind": "audio",
+      "side": "left",
+      "top": 140,
+      "label": "aud ref"
+     },
+     {
+      "kind": "text",
+      "side": "left",
+      "top": 164,
+      "label": "prompt"
+     },
+     {
+      "kind": "video",
+      "side": "right",
+      "top": 104
+     }
+    ],
+    "footer": {
+     "left": "pixverse create reference",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · motion control",
+   "node": {
+    "id": "tpl6",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse motion control",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "motion-control",
+      "--image",
+      "{from}",
+      "--video",
+      "{to}",
+      "--model",
+      "v5.6",
+      "--quality",
+      "720p",
+      "--timeout",
+      "600",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "motion-control"
+      },
+      {
+       "k": "model",
+       "v": "v5.6"
+      },
+      {
+       "k": "quality",
+       "v": "720p"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 44,
+      "label": "char"
+     },
+     {
+      "kind": "video",
+      "side": "left",
+      "top": 68,
+      "label": "motion"
+     },
+     {
+      "kind": "video",
+      "side": "right",
+      "top": 58
+     }
+    ],
+    "footer": {
+     "left": "pixverse create motion-control",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · extend",
+   "node": {
+    "id": "tpl7",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse extend",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "extend",
+      "--video",
+      "{video_id}",
+      "--prompt",
+      "{prompt}",
+      "--model",
+      "v6",
+      "--timeout",
+      "600",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "extend"
+      },
+      {
+       "k": "model",
+       "v": "v6"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "video",
+      "side": "left",
+      "top": 44,
+      "label": "video"
+     },
+     {
+      "kind": "text",
+      "side": "left",
+      "top": 68,
+      "label": "prompt"
+     },
+     {
+      "kind": "video",
+      "side": "right",
+      "top": 58
+     }
+    ],
+    "footer": {
+     "left": "pixverse create extend",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · upscale",
+   "node": {
+    "id": "tpl8",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse upscale",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "upscale",
+      "--video",
+      "{video_id}",
+      "--quality",
+      "2160p",
+      "--timeout",
+      "600",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "upscale"
+      },
+      {
+       "k": "quality",
+       "v": "2160p"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "video",
+      "side": "left",
+      "top": 52,
+      "label": "video"
+     },
+     {
+      "kind": "video",
+      "side": "right",
+      "top": 52
+     }
+    ],
+    "footer": {
+     "left": "pixverse create upscale",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · modify",
+   "node": {
+    "id": "tpl9",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse modify",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "modify",
+      "--video",
+      "{video_id}",
+      "--images",
+      "{images}",
+      "--prompt",
+      "{prompt}",
+      "--keyframe-time",
+      "0",
+      "--model",
+      "v5.5",
+      "--quality",
+      "720p",
+      "--count",
+      "1",
+      "--timeout",
+      "600",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "modify"
+      },
+      {
+       "k": "model",
+       "v": "v5.5"
+      },
+      {
+       "k": "quality",
+       "v": "720p"
+      },
+      {
+       "k": "keyframe",
+       "v": "0ms"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "video",
+      "side": "left",
+      "top": 44,
+      "label": "video"
+     },
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 68,
+      "label": "ref 1"
+     },
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 92,
+      "label": "ref 2"
+     },
+     {
+      "kind": "text",
+      "side": "left",
+      "top": 116,
+      "label": "prompt"
+     },
+     {
+      "kind": "video",
+      "side": "right",
+      "top": 80
+     }
+    ],
+    "footer": {
+     "left": "pixverse create modify",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · voice",
+   "node": {
+    "id": "tpl10",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse voice",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "voice",
+      "--text",
+      "{prompt}",
+      "--model",
+      "speech-2.8-hd",
+      "--language",
+      "auto",
+      "--speed",
+      "1",
+      "--timeout",
+      "300",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "voice"
+      },
+      {
+       "k": "model",
+       "v": "speech-2.8-hd"
+      },
+      {
+       "k": "language",
+       "v": "auto"
+      },
+      {
+       "k": "speed",
+       "v": "1×"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "text",
+      "side": "left",
+      "top": 52,
+      "label": "text"
+     },
+     {
+      "kind": "audio",
+      "side": "right",
+      "top": 52
+     }
+    ],
+    "footer": {
+     "left": "pixverse create voice",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · music",
+   "node": {
+    "id": "tpl11",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse music",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "music",
+      "--prompt",
+      "{prompt}",
+      "--image",
+      "{images}",
+      "--model",
+      "music-2.6",
+      "--instrumental",
+      "--duration-seconds",
+      "60",
+      "--timeout",
+      "300",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "music"
+      },
+      {
+       "k": "model",
+       "v": "music-2.6"
+      },
+      {
+       "k": "duration",
+       "v": "60s"
+      },
+      {
+       "k": "lyrics",
+       "v": "instrumental"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 44,
+      "label": "ref · lyria"
+     },
+     {
+      "kind": "text",
+      "side": "left",
+      "top": 68,
+      "label": "prompt"
+     },
+     {
+      "kind": "audio",
+      "side": "right",
+      "top": 58
+     }
+    ],
+    "footer": {
+     "left": "pixverse create music",
+     "right": "— idle"
+    }
+   }
+  },
+  {
+   "title": "PixVerse · template",
+   "node": {
+    "id": "tpl12",
+    "x": 0,
+    "y": 0,
+    "kind": "cli",
+    "title": "PixVerse template",
+    "w": 244,
+    "badge": "cli · pixverse",
+    "cli": {
+     "bin": "pixverse",
+     "cmd": "pixverse",
+     "args": [
+      "create",
+      "template",
+      "--image",
+      "{images}",
+      "--video",
+      "{video}",
+      "--prompt",
+      "{prompt}",
+      "--quality",
+      "720p",
+      "--count",
+      "1",
+      "--timeout",
+      "600",
+      "--json"
+     ],
+     "fields": [
+      {
+       "k": "mode",
+       "v": "template"
+      },
+      {
+       "k": "template",
+       "v": "required"
+      },
+      {
+       "k": "quality",
+       "v": "720p"
+      }
+     ]
+    },
+    "ports": [
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 44,
+      "label": "img 1"
+     },
+     {
+      "kind": "image",
+      "side": "left",
+      "top": 68,
+      "label": "img 2"
+     },
+     {
+      "kind": "video",
+      "side": "left",
+      "top": 92,
+      "label": "video"
+     },
+     {
+      "kind": "text",
+      "side": "left",
+      "top": 116,
+      "label": "prompt"
+     },
+     {
+      "kind": "asset",
+      "side": "right",
+      "top": 80
+     }
+    ],
+    "footer": {
+     "left": "pixverse create template",
+     "right": "— idle"
+    }
+   }
+  }
+ ]
+}

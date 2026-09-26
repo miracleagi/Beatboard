@@ -273,7 +273,7 @@ function selectCandidateThumbs(graph, project, node) {
         const from = nodeById(graph, edge.from.node);
         const source = editorSourceThumbs(from, project.runResults[from?.id]);
         if (!source.length) return;
-        if (from.kind === 'gen' || from.kind === 'motion' || from.kind === 'cli') {
+        if (from.kind === 'gen' || from.kind === 'motion' || from.kind === 'cli' || from.kind === 'task') {
           source.forEach((thumb, i) => thumbs.push({ ...thumb, sourceNodeId: from.id, sourceIndex: i }));
           return;
         }
@@ -307,44 +307,23 @@ function computeAutoLayout(nodes, edges) {
 
   // Fixed kind → column index mapping (pipeline order)
   //   col 0: inputs (asset, prompt)
-  //   col 1: image generation (gen, or pixverse create image CLI)
-  //   col 2: video generation (motion, or pixverse create video CLI)
-  //   col 3: other CLI processing (ffmpeg, etc.)
+  //   col 1: image / audio generation
+  //   col 2: video generation
+  //   col 3: video post-processing (extend, upscale, modify) and CLI tools (ffmpeg)
   //   col 4: pick / select
   //   col 5: output
   const KIND_COL = { asset: 0, prompt: 0, gen: 1, motion: 2, cli: 3, select: 4, output: 5 };
 
-  // For CLI nodes, peek at bin + args to distinguish pixverse image / video / other.
-  // PixVerse nodes store: cli.bin='pixverse', cli.cmd='pixverse',
-  //   cli.args=['create','image',...] or ['create','video',...]
-  function cliColFor(n) {
-    const bin = String(n.cli?.bin || n.cli?.cmd || '').trim().toLowerCase().split(/[\\/]/).pop();
-    const args = (n.cli?.args || []).map(a => String(a).toLowerCase());
-    // Also check footer.left which stores 'pixverse create <subcommand>'
-    const footer = String(n.footer?.left || '').toLowerCase();
-    if (bin === 'pixverse' || /pixverse/.test(footer)) {
-      const hasCreate = args.includes('create') || /create/.test(footer);
-      if (hasCreate) {
-        // col 1 (gen): image
-        if (args.includes('image') || /create image/.test(footer)) return KIND_COL.gen;
-        // col 2 (motion): video, transition, reference, motion-control
-        if (args.includes('video') || /create video/.test(footer)) return KIND_COL.motion;
-        if (args.includes('transition') || /create transition/.test(footer)) return KIND_COL.motion;
-        if (args.includes('reference') || /create reference/.test(footer)) return KIND_COL.motion;
-        if (args.includes('motion-control') || /create motion-control/.test(footer)) return KIND_COL.motion;
-        // col 3 (cli): post-process operations
-        if (args.includes('extend') || /create extend/.test(footer)) return KIND_COL.cli;
-        if (args.includes('upscale') || /create upscale/.test(footer)) return KIND_COL.cli;
-        if (args.includes('modify') || /create modify/.test(footer)) return KIND_COL.cli;
-        // Standalone audio generation sits with other generators.
-        if (args.includes('voice') || /create voice/.test(footer)) return KIND_COL.gen;
-        if (args.includes('music') || /create music/.test(footer)) return KIND_COL.gen;
-        if (args.includes('template') || /create template/.test(footer)) return KIND_COL.motion;
-      }
-      // pixverse but unknown subcommand — treat as image gen
-      return KIND_COL.gen;
-    }
-    return KIND_COL.cli;  // ffmpeg / other
+  // Generator (task) nodes: image and audio generators sit in the image
+  // column, video generators and effects in the video column, and nodes that
+  // transform an existing video (extend / upscale / modify) after them.
+  const TASK_COL = {
+    'video.extend': KIND_COL.cli, 'video.upscale': KIND_COL.cli, 'video.modify': KIND_COL.cli,
+  };
+  function taskColFor(n) {
+    if (TASK_COL[n.capability] !== undefined) return TASK_COL[n.capability];
+    const out = taskOutputKind(n);
+    return out === 'video' || out === 'asset' ? KIND_COL.motion : KIND_COL.gen;
   }
 
   // Measure actual heights / widths from the DOM
@@ -384,7 +363,7 @@ function computeAutoLayout(nodes, edges) {
   // Final column assignment: prefer kind-based, else topological
   const MAX_KIND_COL = Math.max(...Object.values(KIND_COL));
   function colFor(n) {
-    if (n.kind === 'cli') return cliColFor(n); // pixverse image/video/other
+    if (n.kind === 'task') return taskColFor(n);
     if (KIND_COL[n.kind] !== undefined) return KIND_COL[n.kind];
     // Unknown kind: place after the last known kind column
     return MAX_KIND_COL + 1 + (topoLevel[n.id] ?? 0);
@@ -657,7 +636,7 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
     } else if (action === 'duplicate') {
       const orig = nodeById(graph, id);
       if (!orig) return;
-      const newId = makeNodeId(graph, orig.kind.slice(0,3));
+      const newId = makeNodeId(graph, nodeIdPrefix(orig.kind));
       const copy = JSON.parse(JSON.stringify(orig));
       copy.id = newId;
       copy.x = orig.x + 24;
@@ -692,7 +671,7 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
     const x = clientX - rect.left - pan.x - 100;
     const y = clientY - rect.top - pan.y - 30;
     const fresh = template.spawn();
-    const id = makeNodeId(graph, template.kind.slice(0,3));
+    const id = makeNodeId(graph, nodeIdPrefix(template.kind));
     dispatch({ type: 'PATCH_GRAPH', fn: g => ({
       ...g,
       nodes: [...g.nodes, { ...fresh, id, x, y }],

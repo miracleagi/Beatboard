@@ -1,0 +1,278 @@
+{
+  "id": "pixverse",
+  "name": "PixVerse",
+  "auth": "cli-login",
+  "models": {
+    "gpt-image-2.0": "GPT Image 2",
+    "gemini-3.1-flash": "Nano Banana 2",
+    "gemini-3.1-flash-lite": "Nano Banana 2 Lite",
+    "qwen-image": "Qwen Image",
+    "seedream-5.0-pro": "Seedream 5 Pro",
+    "seedream-5.0-lite": "Seedream 5 Lite",
+    "v6": "PixVerse v6",
+    "seedance-2.0-standard": "Seedance 2.0 Standard",
+    "seedance-2.0-fast": "Seedance 2.0 Fast",
+    "seedance-2.0-mini": "Seedance 2.0 Mini",
+    "gemini-omni-flash": "Google Gemini Omni",
+    "grok-imagine-1.5": "Grok Imagine 1.5",
+    "speech-2.8-hd": "MiniMax Speech 2.8 HD",
+    "speech-2.8-turbo": "MiniMax Speech 2.8 Turbo",
+    "music-2.6": "MiniMax Music 2.6",
+    "music-v1": "ElevenLabs Music",
+    "lyria-3-pro-preview": "Google Lyria 3 Pro",
+    "veo-3.1-lite": "Veo 3.1 Lite"
+  },
+  "param_defs": {
+    "resolution": { "bucket": "params", "label": "Quality", "type": "enum", "section": "Quality" },
+    "aspect_ratio": { "bucket": "params", "label": "Aspect ratio", "type": "enum", "section": "Aspect ratio" },
+    "duration_s": { "bucket": "params", "label": "Duration", "type": "enum", "unit": "s", "section": "Duration" },
+    "count": { "bucket": "params", "label": "count", "type": "int", "min": 1, "default": 1, "section": "Generation" },
+    "seed": { "bucket": "params", "label": "seed", "type": "int", "section": "Generation" },
+    "audio": { "bucket": "params", "label": "audio", "type": "tri", "labels": ["audio", "no-audio"], "section": "Flags" },
+    "multi_shot": { "bucket": "provider_params", "label": "multi-shot", "type": "tri", "labels": ["multi-shot", "no-multi"], "section": "Flags" },
+    "off_peak": { "bucket": "provider_params", "label": "off-peak", "type": "bool", "section": "Flags" },
+    "no_wait": { "bucket": "provider_params", "label": "no-wait", "type": "bool", "section": "Flags" },
+    "detail_level": { "bucket": "provider_params", "label": "detail", "type": "string", "section": "Generation", "placeholder": "low | medium | high" },
+    "keyframe_time": { "bucket": "provider_params", "label": "keyframe ms", "type": "int", "min": 0, "default": 0, "section": "Generation" },
+    "template_id": { "bucket": "provider_params", "label": "template ID (required)", "type": "string", "section": "Template" },
+    "timeout": { "bucket": "provider_params", "label": "timeout", "type": "int", "min": 1, "section": "Advanced" },
+    "idempotency_key": { "bucket": "provider_params", "label": "idempotency", "type": "string", "section": "Advanced" },
+    "voice_id": { "bucket": "provider_params", "label": "preset voice ID", "type": "string", "section": "Voice" },
+    "provider_voice_id": { "bucket": "provider_params", "label": "provider voice ID", "type": "string", "section": "Voice" },
+    "language": { "bucket": "provider_params", "label": "language", "type": "string", "default": "auto", "section": "Voice" },
+    "emotion": { "bucket": "provider_params", "label": "emotion", "type": "string", "section": "Voice" },
+    "speed": { "bucket": "provider_params", "label": "speed", "type": "string", "default": "1", "section": "Voice tuning" },
+    "volume": { "bucket": "provider_params", "label": "volume", "type": "string", "section": "Voice tuning" },
+    "pitch": { "bucket": "provider_params", "label": "pitch", "type": "string", "section": "Voice tuning" },
+    "stability": { "bucket": "provider_params", "label": "stability", "type": "string", "section": "Voice tuning" },
+    "similarity_boost": { "bucket": "provider_params", "label": "similarity", "type": "string", "section": "Voice tuning" },
+    "style": { "bucket": "provider_params", "label": "style", "type": "string", "section": "Voice tuning" },
+    "use_speaker_boost": { "bucket": "provider_params", "label": "speaker boost", "type": "tri", "labels": ["speaker boost", "no boost"], "section": "Voice tuning" },
+    "lyrics": { "bucket": "provider_params", "label": "lyrics / file path", "type": "string", "section": "Lyrics" },
+    "instrumental": { "bucket": "provider_params", "label": "instrumental", "type": "bool", "excludes": ["auto_lyrics"], "section": "Lyrics" },
+    "auto_lyrics": { "bucket": "provider_params", "label": "auto lyrics", "type": "bool", "excludes": ["instrumental"], "section": "Lyrics" },
+    "no_duration_auto": { "bucket": "provider_params", "label": "fixed duration", "type": "bool", "section": "Lyrics" },
+    "output": { "bucket": "provider_params", "label": "output path", "type": "string", "section": "Advanced" },
+    "client_request_id": { "bucket": "provider_params", "label": "request ID", "type": "string", "section": "Advanced" }
+  },
+  "capabilities": {
+    "image.generate": {
+      "models": ["gpt-image-2.0", "gemini-3.1-flash", "gemini-3.1-flash-lite", "qwen-image", "gemini-3.0", "gemini-2.5-flash", "seedream-5.0-pro", "seedream-5.0-lite", "seedream-4.5", "seedream-4.0", "kling-image-o3", "kling-image-v3"],
+      "initial": {
+        "model": "gpt-image-2.0",
+        "params": { "resolution": "1080p", "aspect_ratio": "16:9", "count": 1 },
+        "provider_params": { "timeout": 300 }
+      },
+      "help": "Text to image, or image to image: every connected image is sent as a reference (multi-image fusion).",
+      "params": [
+        { "key": "resolution", "options": ["512p", "720p", "1080p", "1440p", "1800p", "2160p"], "default": "1080p" },
+        { "key": "aspect_ratio", "options": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "2:1", "1:2", "5:4", "4:5", "21:9"], "default": "16:9" },
+        { "key": "count" },
+        { "key": "seed" },
+        { "key": "detail_level" },
+        { "key": "no_wait" },
+        { "key": "timeout", "default": 300 },
+        { "key": "idempotency_key" }
+      ]
+    },
+    "video.generate": {
+      "models": ["v6", "pixverse-c1", "seedance-2.0-standard", "seedance-2.0-fast", "seedance-2.0-mini", "gemini-omni-flash", "happyhorse-1.0", "kling-o3-pro", "kling-o3-standard", "kling-3.0-pro", "kling-3.0-standard", "grok-imagine-1.5", "grok-imagine", "veo-3.1-lite", "veo-3.1-standard", "veo-3.1-fast", "sora-2-pro", "sora-2", "v5.6"],
+      "initial": {
+        "model": "v6",
+        "params": { "duration_s": 5, "resolution": "720p", "aspect_ratio": "16:9", "count": 1 },
+        "provider_params": { "timeout": 600 }
+      },
+      "help": "Text to video, or image to video when a source image is connected.",
+      "params": [
+        { "key": "resolution", "options": ["360p", "480p", "540p", "720p", "1080p", "2160p"], "default": "720p" },
+        { "key": "aspect_ratio", "options": ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9"], "default": "16:9" },
+        { "key": "duration_s", "options": [3, 4, 5, 6, 8, 10, 12, 15], "default": 5 },
+        { "key": "count" },
+        { "key": "seed" },
+        { "key": "audio" },
+        { "key": "multi_shot" },
+        { "key": "off_peak" },
+        { "key": "no_wait" },
+        { "key": "timeout", "default": 600 },
+        { "key": "idempotency_key" }
+      ]
+    },
+    "video.transition": {
+      "models": ["v6", "pixverse-c1", "seedance-2.0-standard", "seedance-2.0-fast", "seedance-2.0-mini", "kling-o3-pro", "kling-o3-standard", "kling-3.0-pro", "kling-3.0-standard", "veo-3.1-lite", "veo-3.1-standard", "veo-3.1-fast", "v5.6", "v5"],
+      "initial": {
+        "model": "v6",
+        "params": { "resolution": "720p" },
+        "provider_params": { "timeout": 600 }
+      },
+      "help": "多关键帧过渡：按端口顺序连接 frame 1 → frame 2 → frame 3（至少 2 帧），沿关键帧生成过渡视频。Prompt 可用 @image1 / @image2 等引用各帧，引导过渡内容。",
+      "params": [
+        { "key": "resolution", "options": ["360p", "480p", "540p", "720p", "1080p", "2160p"], "default": "720p" },
+        { "key": "duration_s", "options": [3, 4, 5, 6, 8, 10, 12, 15], "default": 5 },
+        { "key": "count" },
+        { "key": "seed" },
+        { "key": "audio" },
+        { "key": "off_peak" },
+        { "key": "no_wait" },
+        { "key": "timeout", "default": 600 },
+        { "key": "idempotency_key" }
+      ]
+    },
+    "video.reference": {
+      "models": ["v6", "pixverse-c1", "seedance-2.0-standard", "seedance-2.0-fast", "seedance-2.0-mini", "gemini-omni-flash", "kling-o3-pro", "kling-o3-standard", "grok-imagine", "v5.6"],
+      "initial": {
+        "model": "v6",
+        "params": { "resolution": "720p", "aspect_ratio": "16:9" },
+        "provider_params": { "timeout": 600 }
+      },
+      "help": "接入角色图 + 可选视频/音频参考（音视频参考仅 seedance-2.0）+ Prompt。音频最多 3 段、每段 2–15 秒、总长 ≤15 秒。Prompt 中可用 @image1 @video1 @audio1 引用对应输入，例如：\"@image1 follows the motion in @video1\"。",
+      "params": [
+        { "key": "resolution", "options": ["360p", "480p", "540p", "720p", "1080p", "2160p"], "default": "720p" },
+        { "key": "aspect_ratio", "options": ["auto", "16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9"], "default": "16:9" },
+        { "key": "duration_s", "options": [3, 4, 5, 6, 8, 10, 12, 15], "default": 5 },
+        { "key": "count" },
+        { "key": "seed" },
+        { "key": "audio" },
+        { "key": "off_peak" },
+        { "key": "no_wait" },
+        { "key": "timeout", "default": 600 },
+        { "key": "idempotency_key" }
+      ]
+    },
+    "video.motion_control": {
+      "models": ["v5.6"],
+      "initial": {
+        "model": "v5.6",
+        "params": { "resolution": "720p" },
+        "provider_params": { "timeout": 600 }
+      },
+      "help": "char（图像）+ motion（参考视频）→ 人物按参考动作生成视频。模型固定为 v5.6，不支持 aspect-ratio / duration。",
+      "params": [
+        { "key": "resolution", "options": ["360p", "540p", "720p", "1080p"], "default": "720p" },
+        { "key": "count" },
+        { "key": "off_peak" },
+        { "key": "no_wait" },
+        { "key": "timeout", "default": 600 },
+        { "key": "idempotency_key" }
+      ]
+    },
+    "video.extend": {
+      "models": ["v6", "grok-imagine"],
+      "initial": {
+        "model": "v6",
+        "params": {},
+        "provider_params": { "timeout": 600 }
+      },
+      "help": "接入上游视频延长其时长。可选接 Prompt 节点引导延长方向。视频云端 ID 自动从上游结果提取。",
+      "params": [
+        { "key": "resolution", "options": ["360p", "540p", "720p", "1080p"], "default": "720p" },
+        { "key": "duration_s", "label": "Duration (extension)", "options": [3, 5, 8, 10], "default": 5 },
+        { "key": "count" },
+        { "key": "seed" },
+        { "key": "audio" },
+        { "key": "off_peak" },
+        { "key": "no_wait" },
+        { "key": "timeout", "default": 600 },
+        { "key": "idempotency_key" }
+      ]
+    },
+    "video.upscale": {
+      "models": [],
+      "initial": {
+        "params": { "resolution": "2160p" },
+        "provider_params": { "timeout": 600 }
+      },
+      "help": "Connect an upstream video to upscale its resolution to 2160p (4K).",
+      "params": [
+        { "key": "resolution", "label": "Target quality", "options": ["2160p"], "default": "2160p" },
+        { "key": "no_wait" },
+        { "key": "timeout", "default": 600 },
+        { "key": "idempotency_key" }
+      ]
+    },
+    "video.modify": {
+      "models": ["v5.5"],
+      "initial": {
+        "model": "v5.5",
+        "params": { "resolution": "720p", "count": 1 },
+        "provider_params": { "keyframe_time": 0, "timeout": 600 }
+      },
+      "help": "修改上游视频，可接最多 5 张参考图并在提示词中用 @image1 等引用。模型固定为 v5.5。",
+      "params": [
+        { "key": "resolution", "options": ["360p", "480p", "540p", "720p", "1080p"], "default": "720p" },
+        { "key": "count" },
+        { "key": "keyframe_time" },
+        { "key": "seed" },
+        { "key": "off_peak" },
+        { "key": "no_wait" },
+        { "key": "timeout", "default": 600 },
+        { "key": "idempotency_key" }
+      ]
+    },
+    "audio.speech": {
+      "models": ["speech-2.8-hd", "speech-2.8-turbo", "eleven-multilingual-v2", "eleven-v3", "eleven-turbo-v2.5"],
+      "initial": {
+        "model": "speech-2.8-hd",
+        "params": {},
+        "provider_params": { "language": "auto", "speed": "1", "timeout": 300 }
+      },
+      "help": "将上游 Prompt 合成为独立音频。旧版 lip-sync create speech 已被 CLI 删除；voice 不再需要视频输入。",
+      "params": [
+        { "key": "voice_id" },
+        { "key": "provider_voice_id" },
+        { "key": "language" },
+        { "key": "emotion" },
+        { "key": "speed" },
+        { "key": "volume" },
+        { "key": "pitch" },
+        { "key": "stability" },
+        { "key": "similarity_boost" },
+        { "key": "style" },
+        { "key": "use_speaker_boost" },
+        { "key": "no_wait", "section": "Advanced" },
+        { "key": "output" },
+        { "key": "timeout", "default": 300 },
+        { "key": "client_request_id" }
+      ]
+    },
+    "audio.music": {
+      "models": ["music-2.6", "music-v1", "lyria-3-pro-preview"],
+      "initial": {
+        "model": "music-2.6",
+        "params": { "duration_s": 60 },
+        "provider_params": { "instrumental": true, "timeout": 300 }
+      },
+      "help": "生成独立音乐音频。instrumental 优先级最高；auto-lyrics 开启时会忽略手写 lyrics。Lyria 可使用上游参考图。",
+      "params": [
+        { "key": "lyrics" },
+        { "key": "instrumental" },
+        { "key": "auto_lyrics" },
+        { "key": "no_duration_auto" },
+        { "key": "duration_s", "label": "duration seconds", "type": "int", "min": 10, "max": 240, "default": 60, "section": "Generation" },
+        { "key": "no_wait", "section": "Advanced" },
+        { "key": "output" },
+        { "key": "timeout", "default": 300 },
+        { "key": "client_request_id" }
+      ]
+    },
+    "provider.template": {
+      "models": [],
+      "initial": {
+        "params": { "resolution": "720p", "count": 1 },
+        "provider_params": { "timeout": 600 }
+      },
+      "help": "Run a PixVerse template / effect by template ID. The result is an image or a video depending on the template.",
+      "params": [
+        { "key": "template_id" },
+        { "key": "resolution", "options": ["360p", "480p", "540p", "720p", "1080p", "2160p"], "default": "720p" },
+        { "key": "aspect_ratio", "options": ["auto", "16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9"], "default": "16:9" },
+        { "key": "duration_s", "label": "duration", "type": "int", "min": 1, "default": 5, "section": "Generation" },
+        { "key": "count", "max": 4 },
+        { "key": "seed" },
+        { "key": "off_peak" },
+        { "key": "no_wait" },
+        { "key": "timeout", "default": 600 },
+        { "key": "idempotency_key" }
+      ]
+    }
+  }
+}

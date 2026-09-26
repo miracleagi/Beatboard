@@ -8,8 +8,8 @@
 // One reducer owns everything. Persistence runs after every dispatch (debounced).
 
 // ---------- NODE TEMPLATES ----------
-// Nodes available in the palette. Only includes nodes with working Rust backends.
-// To add a new provider: implement it in src-tauri/src/, then add a template here.
+// Static palette nodes. Generator nodes come from the provider catalog
+// (src/providers/*.json) — see paletteTemplates().
 const NODE_TEMPLATES = [
   // ── Inputs ────────────────────────────────────────────────────────────────
   { kind: 'prompt', title: 'Prompt', group: 'Inputs',
@@ -26,240 +26,6 @@ const NODE_TEMPLATES = [
       thumbs: [{ seed: `as${Math.random()}`, label: 'unnamed' }],
       ports: [{ kind: 'image', side: 'right', top: 36 }],
       footer: { left: 'dropped · just now', right: 'ready' },
-    }),
-  },
-
-  // ── PixVerse ──────────────────────────────────────────────────────────────
-  { kind: 'cli', title: 'PixVerse · image', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse image', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        // {images} expands to every connected image dep (multi-image fusion,
-        // e.g. gpt-image-2.0 / gemini); auto-dropped when nothing is connected.
-        args: ['create', 'image', '--prompt', '{prompt}', '--images', '{images}', '--model', 'gpt-image-2.0',
-               '--quality', '1080p', '--aspect-ratio', '16:9', '--count', '1',
-               '--timeout', '300', '--json'],
-        fields: [{ k: 'mode', v: 'T2I/I2I' }, { k: 'model', v: 'gpt-image-2.0' },
-                 { k: 'quality', v: '1080p' }, { k: 'ratio', v: '16:9' }],
-      },
-      ports: [
-        { kind: 'image', side: 'left', top: 44, label: 'img 1' },
-        { kind: 'image', side: 'left', top: 68, label: 'img 2' },
-        { kind: 'text', side: 'left', top: 92, label: 'prompt' },
-        { kind: 'image', side: 'right', top: 68 },
-      ],
-      footer: { left: 'pixverse create image', right: '— idle' },
-    }),
-  },
-  { kind: 'cli', title: 'PixVerse · video', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse video', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'video', '--prompt', '{prompt}', '--image', '{image}',
-               '--model', 'v6', '--duration', '5', '--quality', '720p',
-               '--aspect-ratio', '16:9', '--count', '1', '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'T2V/I2V' }, { k: 'model', v: 'v6' },
-                 { k: 'duration', v: '5s' }, { k: 'ratio', v: '16:9' }],
-      },
-      ports: [
-        { kind: 'image', side: 'left', top: 44, label: 'src' },
-        { kind: 'text', side: 'left', top: 68, label: 'prompt' },
-        { kind: 'video', side: 'right', top: 58 },
-      ],
-      footer: { left: 'pixverse create video', right: '— idle' },
-    }),
-  },
-
-  { kind: 'cli', title: 'PixVerse · transition', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse transition', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        // Multi-frame keyframe transition: {images} expands to every connected
-        // keyframe in port order (2+ required by the CLI).
-        args: ['create', 'transition', '--images', '{images}',
-               '--prompt', '{prompt}',
-               '--model', 'v6', '--quality', '720p',
-               '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'transition · keyframes' }, { k: 'model', v: 'v6' },
-                 { k: 'quality', v: '720p' }],
-      },
-      ports: [
-        { kind: 'image', side: 'left', top: 44, label: 'frame 1' },
-        { kind: 'image', side: 'left', top: 68, label: 'frame 2' },
-        { kind: 'image', side: 'left', top: 92, label: 'frame 3' },
-        { kind: 'text',  side: 'left', top: 116, label: 'prompt' },
-        { kind: 'video', side: 'right', top: 80 },
-      ],
-      footer: { left: 'pixverse create transition', right: '— idle' },
-    }),
-  },
-  { kind: 'cli', title: 'PixVerse · reference', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse reference', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        // Multi-value tokens expand to every connected reference of that media type.
-        args: ['create', 'reference',
-               '--images', '{images}',
-               '--videos', '{videos}',
-               '--audios', '{audios}',
-               '--prompt', '{prompt}',
-               '--model', 'v6', '--quality', '720p', '--aspect-ratio', '16:9',
-               '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'reference' }, { k: 'model', v: 'v6' },
-                 { k: 'quality', v: '720p' }, { k: 'ratio', v: '16:9' }],
-      },
-      ports: [
-        { kind: 'image', side: 'left', top: 44,  label: 'img 1' },
-        { kind: 'image', side: 'left', top: 68,  label: 'img 2' },
-        { kind: 'image', side: 'left', top: 92,  label: 'img 3' },
-        { kind: 'video', side: 'left', top: 116, label: 'vid ref' },
-        { kind: 'audio', side: 'left', top: 140, label: 'aud ref' },
-        { kind: 'text',  side: 'left', top: 164, label: 'prompt' },
-        { kind: 'video', side: 'right', top: 104 },
-      ],
-      footer: { left: 'pixverse create reference', right: '— idle' },
-    }),
-  },
-  { kind: 'cli', title: 'PixVerse · motion control', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse motion control', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        // --image = character image; --video = motion reference (no --aspect-ratio supported)
-        args: ['create', 'motion-control', '--image', '{from}', '--video', '{to}',
-               '--model', 'v5.6', '--quality', '720p',
-               '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'motion-control' }, { k: 'model', v: 'v5.6' },
-                 { k: 'quality', v: '720p' }],
-      },
-      ports: [
-        { kind: 'image', side: 'left', top: 44, label: 'char' },
-        { kind: 'video', side: 'left', top: 68, label: 'motion' },
-        { kind: 'video', side: 'right', top: 58 },
-      ],
-      footer: { left: 'pixverse create motion-control', right: '— idle' },
-    }),
-  },
-  { kind: 'cli', title: 'PixVerse · extend', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse extend', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        // --video accepts file path, URL, or video ID; {video_id} = cloud ID if available, else local path
-        args: ['create', 'extend', '--video', '{video_id}',
-               '--prompt', '{prompt}',
-               '--model', 'v6', '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'extend' }, { k: 'model', v: 'v6' }],
-      },
-      ports: [
-        { kind: 'video', side: 'left', top: 44, label: 'video' },
-        { kind: 'text',  side: 'left', top: 68, label: 'prompt' },
-        { kind: 'video', side: 'right', top: 58 },
-      ],
-      footer: { left: 'pixverse create extend', right: '— idle' },
-    }),
-  },
-  { kind: 'cli', title: 'PixVerse · upscale', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse upscale', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        // --video accepts file path, URL, or video ID.
-        // Since CLI 1.2.10 the only accepted target quality is 2160p.
-        args: ['create', 'upscale', '--video', '{video_id}',
-               '--quality', '2160p', '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'upscale' }, { k: 'quality', v: '2160p' }],
-      },
-      ports: [
-        { kind: 'video', side: 'left', top: 52, label: 'video' },
-        { kind: 'video', side: 'right', top: 52 },
-      ],
-      footer: { left: 'pixverse create upscale', right: '— idle' },
-    }),
-  },
-  { kind: 'cli', title: 'PixVerse · modify', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse modify', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'modify', '--video', '{video_id}',
-               '--images', '{images}', '--prompt', '{prompt}',
-               '--keyframe-time', '0', '--model', 'v5.5', '--quality', '720p',
-               '--count', '1', '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'modify' }, { k: 'model', v: 'v5.5' },
-                 { k: 'quality', v: '720p' }, { k: 'keyframe', v: '0ms' }],
-      },
-      ports: [
-        { kind: 'video', side: 'left', top: 44, label: 'video' },
-        { kind: 'image', side: 'left', top: 68, label: 'ref 1' },
-        { kind: 'image', side: 'left', top: 92, label: 'ref 2' },
-        { kind: 'text',  side: 'left', top: 116, label: 'prompt' },
-        { kind: 'video', side: 'right', top: 80 },
-      ],
-      footer: { left: 'pixverse create modify', right: '— idle' },
-    }),
-  },
-  { kind: 'cli', title: 'PixVerse · voice', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse voice', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'voice', '--text', '{prompt}',
-               '--model', 'speech-2.8-hd', '--language', 'auto', '--speed', '1',
-               '--timeout', '300', '--json'],
-        fields: [{ k: 'mode', v: 'voice' }, { k: 'model', v: 'speech-2.8-hd' },
-                 { k: 'language', v: 'auto' }, { k: 'speed', v: '1×' }],
-      },
-      ports: [
-        { kind: 'text', side: 'left', top: 52, label: 'text' },
-        { kind: 'audio', side: 'right', top: 52 },
-      ],
-      footer: { left: 'pixverse create voice', right: '— idle' },
-    }),
-  },
-  { kind: 'cli', title: 'PixVerse · music', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse music', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'music', '--prompt', '{prompt}', '--image', '{images}',
-               '--model', 'music-2.6', '--instrumental',
-               '--duration-seconds', '60', '--timeout', '300', '--json'],
-        fields: [{ k: 'mode', v: 'music' }, { k: 'model', v: 'music-2.6' },
-                 { k: 'duration', v: '60s' }, { k: 'lyrics', v: 'instrumental' }],
-      },
-      ports: [
-        // --image reference is only honoured by Google Lyria models
-        { kind: 'image', side: 'left', top: 44, label: 'ref · lyria' },
-        { kind: 'text', side: 'left', top: 68, label: 'prompt' },
-        { kind: 'audio', side: 'right', top: 58 },
-      ],
-      footer: { left: 'pixverse create music', right: '— idle' },
-    }),
-  },
-  { kind: 'cli', title: 'PixVerse · template', group: 'PixVerse',
-    spawn: () => ({
-      kind: 'cli', title: 'PixVerse template', w: 244, badge: 'cli · pixverse',
-      cli: {
-        bin: 'pixverse', cmd: 'pixverse',
-        args: ['create', 'template',
-               '--image', '{images}', '--video', '{video}', '--prompt', '{prompt}',
-               '--quality', '720p', '--count', '1', '--timeout', '600', '--json'],
-        fields: [{ k: 'mode', v: 'template' }, { k: 'template', v: 'required' },
-                 { k: 'quality', v: '720p' }],
-      },
-      ports: [
-        { kind: 'image', side: 'left', top: 44, label: 'img 1' },
-        { kind: 'image', side: 'left', top: 68, label: 'img 2' },
-        { kind: 'video', side: 'left', top: 92, label: 'video' },
-        { kind: 'text', side: 'left', top: 116, label: 'prompt' },
-        { kind: 'asset', side: 'right', top: 80 },
-      ],
-      footer: { left: 'pixverse create template', right: '— idle' },
     }),
   },
 
@@ -305,6 +71,24 @@ const NODE_TEMPLATES = [
     }),
   },
 ];
+
+// One palette entry per capability, grouped by output (Image / Video / …).
+function generatorTemplates() {
+  return capabilityIds().map(capability => {
+    const info = capabilityInfo(capability);
+    return {
+      kind: 'task', capability, title: info.title, group: info.group,
+      spawn: () => spawnTaskNode(capability),
+    };
+  });
+}
+
+// Full palette: inputs, generators, then the static tail (pick, compose, output).
+function paletteTemplates() {
+  const inputs = NODE_TEMPLATES.filter(t => t.group === 'Inputs');
+  const rest = NODE_TEMPLATES.filter(t => t.group !== 'Inputs');
+  return [...inputs, ...generatorTemplates(), ...rest];
+}
 
 // ---------- STORAGE ABSTRACTION ----------
 // Replace `LocalStorage` with a Tauri / Electron file-system adapter later. The
@@ -388,7 +172,7 @@ function upstreamThumbs(deps, options = {}) {
     }
     const thumbs = sourceThumbs(dep);
     if (!thumbs.length) return;
-    if (options.forSelect && (dep.from?.kind === 'gen' || dep.from?.kind === 'motion' || dep.from?.kind === 'cli')) {
+    if (options.forSelect && (dep.from?.kind === 'gen' || dep.from?.kind === 'motion' || dep.from?.kind === 'cli' || dep.from?.kind === 'task')) {
       out.push(...thumbs.map((thumb, i) => ({ ...thumb, sourceIndex: i })));
       return;
     }
@@ -442,6 +226,10 @@ function mockPassthroughResult(node, deps) {
     }
     return { thumbs: thumbs.slice(0, 4).map((t, i) => ({ ...t, label: node.title || t.label, chosen: i === 0 })) };
   }
+  if (node.kind === 'task') {
+    const kind = taskOutputKind(node);
+    return { thumbs: thumbs.slice(0, 4).map((t, i) => ({ ...t, type: kind === 'asset' ? t.type : kind, label: node.title || t.label, chosen: i === 0 })) };
+  }
   if (node.kind === 'motion') {
     const motionKey = `${node.id || node.title || 'motion'}:${node.motionPrompt || ''}:${thumbs[0].seed || thumbs[0].url || thumbs[0].id || ''}`;
     const motionLabel = node.motionPrompt
@@ -456,7 +244,7 @@ const MockExecutor = {
   estimateMs(node) {
     if (node.kind === 'prompt' || node.kind === 'asset' || node.kind === 'output') return 200;
     if (node.kind === 'select') return 600;
-    if (node.kind === 'cli') return 1400;
+    if (node.kind === 'cli' || node.kind === 'task') return 1400;
     if (node.kind === 'motion') return 2400;
     if (node.kind === 'gen') return 1800;
     return 1000;
@@ -502,17 +290,8 @@ function makeDefaultProjects() {
 function makeInitialState() {
   return {
     config: {
-      apiKeys: {
-        openai: '', google: '', piapi: '', replicate: '', fal: '',
-      },
-      binPaths: {
-        ffmpeg: '',
-        'real-esrgan': '~/bin/realesrgan-ncnn-vulkan',
-        rife: '~/bin/rife-ncnn-vulkan',
-        pixverse: '',
-        sh: 'sh',
-      },
-      defaultModel: 'flux.1-dev',
+      // Optional custom executables; empty = Beatboard's bundled/managed runtime.
+      binPaths: { ffmpeg: '', pixverse: '' },
     },
     projects: makeDefaultProjects(),
     activeProjectId: 'p_film',
@@ -535,12 +314,24 @@ function makeInitialState() {
   };
 }
 
+// Saved configs from before P1 carry unused API keys, a default model and
+// prototype binary paths; keep only the runtime overrides that still apply.
+function cleanConfig(config) {
+  const binPaths = (config && config.binPaths) || {};
+  return { binPaths: { ffmpeg: binPaths.ffmpeg || '', pixverse: binPaths.pixverse || '' } };
+}
+
 // ---------- REDUCER ----------
 function appReducer(state, action) {
   switch (action.type) {
     case 'HYDRATE':
       return action.state
-        ? { ...action.state, library: action.state.library || [], projects: action.state.projects.map(p => ({ ...p, outputDir: p.outputDir || '', graph: normalizeGraphPorts(p.graph) })) }
+        ? {
+          ...action.state,
+          config: cleanConfig(action.state.config),
+          library: action.state.library || [],
+          projects: action.state.projects.map(p => ({ ...p, outputDir: p.outputDir || '', graph: normalizeGraphPorts(p.graph) })),
+        }
         : state;
     case 'LIBRARY_ADD': {
       const { item } = action;
@@ -551,8 +342,6 @@ function appReducer(state, action) {
       return { ...state, library: (state.library || []).filter(x => x.id !== action.id) };
     case 'SET_CONFIG':
       return { ...state, config: { ...state.config, ...action.patch } };
-    case 'SET_API_KEY':
-      return { ...state, config: { ...state.config, apiKeys: { ...state.config.apiKeys, [action.key]: action.value } } };
     case 'SET_BIN_PATH':
       return { ...state, config: { ...state.config, binPaths: { ...state.config.binPaths, [action.key]: action.value } } };
     case 'NEW_PROJECT': {
@@ -703,6 +492,11 @@ function appReducer(state, action) {
 }
 
 // ---------- HELPERS ----------
+// Id prefix for new nodes of a kind (generator task nodes read as "gen").
+function nodeIdPrefix(kind) {
+  return kind === 'task' ? 'gen' : String(kind || 'node').slice(0, 3);
+}
+
 function nodeById(graph, id) {
   return graph.nodes.find(n => n.id === id);
 }
@@ -771,6 +565,10 @@ function normalizedNodePorts(node) {
     const left = (node.ports || []).filter(p => p.side === 'left');
     return [...left, singleOutputPort(node, outKind)];
   }
+  if (node.kind === 'task') {
+    const left = (node.ports || []).filter(p => p.side === 'left');
+    return [...left, singleOutputPort(node, taskOutputKind(node))];
+  }
   if (isFfmpegCliNode(node)) {
     return [
       { kind: 'video', side: 'left', top: 60, label: 'clips' },
@@ -826,6 +624,9 @@ function normalizeGraphPorts(graph) {
       );
       migrated = { ...node, cli: { ...node.cli, args, fields } };
     }
+    // Legacy PixVerse argv nodes become provider-neutral task nodes. Port
+    // order is preserved, so existing edges stay valid.
+    migrated = migrateLegacyPixVerseNode(migrated);
     return { ...migrated, ports: normalizedNodePorts(migrated) };
   });
   const nextById = Object.fromEntries(nodes.map(n => [n.id, n]));
@@ -839,7 +640,7 @@ function normalizeGraphPorts(graph) {
     if (!nextFrom || !nextTo) return;
     let fromPort = edge.from.port;
     let toPort = edge.to.port;
-    if (oldFrom?.kind === 'gen' || oldFrom?.kind === 'motion' || oldFrom?.kind === 'select' || isPixVerseCliNode(oldFrom)) {
+    if (oldFrom?.kind === 'gen' || oldFrom?.kind === 'motion' || oldFrom?.kind === 'select' || oldFrom?.kind === 'task' || isPixVerseCliNode(oldFrom)) {
       fromPort = firstPortIndex(nextFrom.ports, 'right');
     }
     if (isFfmpegCliNode(oldFrom)) {
@@ -1127,17 +928,11 @@ function makeNodeId(graph, prefix) {
   return `${prefix}${n}`;
 }
 
-// ---------- PROVIDER COVERAGE (for status pills in UI) ----------
-const PROVIDER_LABEL = {
-  openai: 'OpenAI', google: 'Google', piapi: 'PiAPI',
-  replicate: 'Replicate', fal: 'fal.ai', pixverse: 'PixVerse', local: 'Local',
-};
 
 Object.assign(window, {
-  NODE_TEMPLATES, Storage, Executor,
+  NODE_TEMPLATES, paletteTemplates, Storage, Executor,
   makeInitialState, appReducer,
-  nodeById, nodeDisplayWidth, normalizeGraphPorts, topoOrder, downstreamNodeIds, defaultRunNodeIds, runOrderNodeIds, activeDepsForRun, canConnect, makeNodeId,
-  PROVIDER_LABEL,
+  nodeById, nodeIdPrefix, nodeDisplayWidth, normalizeGraphPorts, topoOrder, downstreamNodeIds, defaultRunNodeIds, runOrderNodeIds, activeDepsForRun, canConnect, makeNodeId,
   // Thumb helpers — exported so editor.jsx can reuse without duplicating
   resultThumbs, sourceThumbs, upstreamThumbs, thumbHasUsableSource, usableResultThumbs,
   nodeHasUsableOutput, dependencyReadiness, nodeInputPortStatuses,

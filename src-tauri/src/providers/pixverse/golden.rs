@@ -5,7 +5,7 @@
 // can create.
 
 use super::{args, legacy, PixVerseProvider, RESOLVED_ARGS};
-use crate::providers::Provider;
+use crate::providers::{catalog, Provider};
 use serde_json::Value;
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/pixverse_task_migration.json");
@@ -30,6 +30,8 @@ fn task_argv(task: &Value, deps: &[Value]) -> Result<Vec<String>, String> {
     let req = PixVerseProvider
         .build_request(task, deps)
         .map_err(|e| e.to_string())?;
+    // Every migrated or spawned node must also pass manifest validation.
+    catalog::validate("pixverse", &req).map_err(|e| e.to_string())?;
     match req.provider_params.get(RESOLVED_ARGS) {
         Some(resolved) => Ok(serde_json::from_value(resolved.clone()).unwrap()),
         None => args::build_args(&req).map_err(|e| e.to_string()),

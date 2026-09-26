@@ -490,7 +490,7 @@ function Palette({ t, onDrop, onAdd, state, dispatch, leftTab, onLeftTabChange }
   const library = state.library || [];
   const groups = React.useMemo(() => {
     const m = {};
-    NODE_TEMPLATES.forEach((tpl, i) => {
+    paletteTemplates().forEach((tpl, i) => {
       m[tpl.group] = m[tpl.group] || [];
       m[tpl.group].push({ ...tpl, idx: i });
     });
@@ -578,6 +578,7 @@ function Palette({ t, onDrop, onAdd, state, dispatch, leftTab, onLeftTabChange }
                     }}
                   >
                     <Icon name={
+                      item.kind === 'task' ? (item.group === 'Video' ? 'motion' : 'sparkle') :
                       item.kind === 'cli' ? 'terminal' :
                       item.kind === 'gen' ? 'sparkle' :
                       item.kind === 'motion' ? 'motion' :
@@ -588,11 +589,6 @@ function Palette({ t, onDrop, onAdd, state, dispatch, leftTab, onLeftTabChange }
                     } size={12}
                       color={item.kind === 'cli' ? t.amber : item.kind === 'output' ? t.green : t.accent}/>
                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</span>
-                    {item.api && (
-                      <span style={{ color: t.textMute, fontFamily: FONT_MONO, fontSize: 9, letterSpacing: 0.3 }}>
-                        {(PROVIDER_LABEL[item.api] || item.api).toUpperCase()}
-                      </span>
-                    )}
                   </div>
                 ))}
               </div>
@@ -621,466 +617,6 @@ function Palette({ t, onDrop, onAdd, state, dispatch, leftTab, onLeftTabChange }
       )}
     </>
   );
-}
-
-// ============ PIXVERSE SUPPORT MATRIX ============
-const PIXVERSE_CREATE_SPECS = {
-  image: {
-    command: 'pixverse create image',
-    models: ['gpt-image-2.0', 'gemini-3.1-flash', 'gemini-3.1-flash-lite', 'qwen-image', 'gemini-3.0', 'gemini-2.5-flash', 'seedream-5.0-pro', 'seedream-5.0-lite', 'seedream-4.5', 'seedream-4.0', 'kling-image-o3', 'kling-image-v3'],
-    params: [
-      '--prompt', '--image', '--images', '--model', '--quality', '--aspect-ratio',
-      '--detail-level', '--count', '--seed', '--idempotency-key', '--no-wait',
-      '--timeout', '--json',
-    ],
-    modes: [
-      { id: 'T2I', label: 'Text to image', required: ['--prompt'] },
-      { id: 'I2I', label: 'Image to image', required: ['--prompt', '--image / --images'] },
-    ],
-  },
-  video: {
-    command: 'pixverse create video',
-    models: ['v6', 'pixverse-c1', 'seedance-2.0-standard', 'seedance-2.0-fast', 'seedance-2.0-mini', 'gemini-omni-flash', 'happyhorse-1.0', 'kling-o3-pro', 'kling-o3-standard', 'kling-3.0-pro', 'kling-3.0-standard', 'grok-imagine-1.5', 'grok-imagine', 'veo-3.1-lite', 'veo-3.1-standard', 'veo-3.1-fast', 'sora-2-pro', 'sora-2', 'v5.6'],
-    params: [
-      '--prompt', '--image', '--model', '--duration', '--quality', '--aspect-ratio',
-      '--seed', '--count', '--audio', '--no-audio', '--multi-shot',
-      '--no-multi-shot', '--off-peak', '--idempotency-key', '--no-wait',
-      '--timeout', '--json',
-    ],
-    modes: [
-      { id: 'T2V', label: 'Text to video', required: ['--prompt'] },
-      { id: 'I2V', label: 'Image to video', required: ['--prompt', '--image'] },
-    ],
-  },
-  transition: {
-    command: 'pixverse create transition',
-    models: ['v6', 'pixverse-c1', 'seedance-2.0-standard', 'seedance-2.0-fast', 'seedance-2.0-mini', 'kling-o3-pro', 'kling-o3-standard', 'kling-3.0-pro', 'kling-3.0-standard', 'veo-3.1-lite', 'veo-3.1-standard', 'veo-3.1-fast', 'v5.6', 'v5'],
-    params: ['--images', '--prompt', '--model', '--quality', '--duration', '--count', '--seed', '--audio', '--no-audio', '--off-peak', '--idempotency-key', '--no-wait', '--timeout', '--json'],
-  },
-  reference: {
-    command: 'pixverse create reference',
-    models: ['v6', 'pixverse-c1', 'seedance-2.0-standard', 'seedance-2.0-fast', 'seedance-2.0-mini', 'gemini-omni-flash', 'kling-o3-pro', 'kling-o3-standard', 'grok-imagine', 'v5.6'],
-    params: ['--images', '--videos', '--audios', '--prompt', '--model', '--quality', '--aspect-ratio', '--duration', '--count', '--seed', '--audio', '--no-audio', '--off-peak', '--idempotency-key', '--no-wait', '--timeout', '--json'],
-  },
-  'motion-control': {
-    command: 'pixverse create motion-control',
-    models: ['v5.6'],
-    params: ['--image', '--video', '--model', '--quality', '--count', '--off-peak', '--idempotency-key', '--no-wait', '--timeout', '--json'],
-  },
-  extend: {
-    command: 'pixverse create extend',
-    models: ['v6', 'grok-imagine'],
-    params: ['--video', '--prompt', '--model', '--quality', '--duration', '--count', '--seed', '--audio', '--no-audio', '--off-peak', '--idempotency-key', '--no-wait', '--timeout', '--json'],
-  },
-  upscale: {
-    command: 'pixverse create upscale',
-    models: [],
-    params: ['--video', '--quality', '--idempotency-key', '--no-wait', '--timeout', '--json'],
-  },
-  modify: {
-    command: 'pixverse create modify',
-    models: ['v5.5'],
-    params: ['--video', '--prompt', '--images', '--keyframe-time', '--model', '--quality', '--count', '--seed', '--off-peak', '--idempotency-key', '--no-wait', '--timeout', '--json'],
-  },
-  voice: {
-    command: 'pixverse create voice',
-    models: ['speech-2.8-hd', 'speech-2.8-turbo', 'eleven-multilingual-v2', 'eleven-v3', 'eleven-turbo-v2.5'],
-    params: ['--text', '--model', '--voice-id', '--provider-voice-id', '--language', '--stability', '--similarity-boost', '--style', '--use-speaker-boost', '--no-use-speaker-boost', '--speed', '--volume', '--pitch', '--emotion', '--client-request-id', '--output', '--no-wait', '--timeout', '--json'],
-  },
-  music: {
-    command: 'pixverse create music',
-    models: ['music-2.6', 'music-v1', 'lyria-3-pro-preview'],
-    params: ['--prompt', '--lyrics', '--model', '--instrumental', '--auto-lyrics', '--no-duration-auto', '--duration-seconds', '--image', '--client-request-id', '--output', '--no-wait', '--timeout', '--json'],
-  },
-  template: {
-    command: 'pixverse create template',
-    models: [],
-    params: ['--template-id', '--image', '--video', '--prompt', '--quality', '--duration', '--aspect-ratio', '--seed', '--count', '--off-peak', '--idempotency-key', '--no-wait', '--timeout', '--json'],
-  },
-};
-
-function pixVerseSpecFor(sub) {
-  return PIXVERSE_CREATE_SPECS[sub] || PIXVERSE_CREATE_SPECS.image;
-}
-
-// Detect which pixverse subcommand a node represents
-function pixVerseSubcommand(node) {
-  const args = node?.cli?.args || [];
-  const idx = args.indexOf('create');
-  if (idx >= 0 && args[idx + 1]) return args[idx + 1];
-  const footer = String(node?.footer?.left || '').toLowerCase();
-  if (/create transition/.test(footer)) return 'transition';
-  if (/create reference/.test(footer)) return 'reference';
-  if (/create motion-control/.test(footer)) return 'motion-control';
-  if (/create extend/.test(footer)) return 'extend';
-  if (/create upscale/.test(footer)) return 'upscale';
-  if (/create modify/.test(footer)) return 'modify';
-  if (/create voice/.test(footer)) return 'voice';
-  if (/create music/.test(footer)) return 'music';
-  if (/create template/.test(footer)) return 'template';
-  if (/create video/.test(footer)) return 'video';
-  return 'image';
-}
-
-// ============ CLI ARG HELPERS ============
-function cliCommandName(node) {
-  const raw = node?.cli?.cmd || node?.cli?.bin || '';
-  return String(raw).trim().split(/\s+/)[0].split(/[\\/]/).pop();
-}
-
-function isPixVerseCli(node) {
-  return node?.kind === 'cli' && cliCommandName(node) === 'pixverse';
-}
-
-function cliArg(args, flag, fallback = '') {
-  const i = (args || []).indexOf(flag);
-  if (i < 0) return fallback;
-  const next = args[i + 1];
-  return next && !String(next).startsWith('--') ? next : fallback;
-}
-
-function hasCliFlag(args, flag) {
-  return (args || []).includes(flag);
-}
-
-function upsertCliArg(args, flag, value) {
-  const next = [...(args || [])];
-  const i = next.indexOf(flag);
-  if (value == null || value === '') {
-    if (i >= 0) {
-      const removeCount = next[i + 1] && !String(next[i + 1]).startsWith('--') ? 2 : 1;
-      next.splice(i, removeCount);
-    }
-    return next;
-  }
-  if (i >= 0) {
-    if (next[i + 1] && !String(next[i + 1]).startsWith('--')) next[i + 1] = String(value);
-    else next.splice(i + 1, 0, String(value));
-    return next;
-  }
-  const jsonIdx = next.indexOf('--json');
-  const insertAt = jsonIdx >= 0 ? jsonIdx : next.length;
-  next.splice(insertAt, 0, flag, String(value));
-  return next;
-}
-
-function setCliToggle(args, flag, enabled) {
-  const next = (args || []).filter(a => a !== flag);
-  if (!enabled) return next;
-  const jsonIdx = next.indexOf('--json');
-  const insertAt = jsonIdx >= 0 ? jsonIdx : next.length;
-  next.splice(insertAt, 0, flag);
-  return next;
-}
-
-
-function pixVerseFields(sub, args) {
-  if (sub === 'image') {
-    return [
-      { k: 'mode', v: 'T2I/I2I' },
-      { k: 'model', v: cliArg(args, '--model', 'gpt-image-2.0') },
-      { k: 'quality', v: cliArg(args, '--quality', '1080p') },
-      { k: 'ratio', v: cliArg(args, '--aspect-ratio', '16:9') },
-      { k: 'count', v: cliArg(args, '--count', '1') },
-    ];
-  }
-  if (sub === 'video') {
-    return [
-      { k: 'mode', v: 'T2V/I2V' },
-      { k: 'model', v: cliArg(args, '--model', 'v6') },
-      { k: 'duration', v: `${cliArg(args, '--duration', '5')}s` },
-      { k: 'quality', v: cliArg(args, '--quality', '720p') },
-      { k: 'ratio', v: cliArg(args, '--aspect-ratio', '16:9') },
-    ];
-  }
-  if (sub === 'transition') {
-    return [
-      { k: 'mode', v: 'transition' },
-      { k: 'model', v: cliArg(args, '--model', 'v6') },
-      { k: 'quality', v: cliArg(args, '--quality', '720p') },
-      { k: 'ratio', v: cliArg(args, '--aspect-ratio', '16:9') },
-    ];
-  }
-  if (sub === 'reference') {
-    return [
-      { k: 'mode', v: 'reference' },
-      { k: 'model', v: cliArg(args, '--model', 'v6') },
-      { k: 'quality', v: cliArg(args, '--quality', '720p') },
-      { k: 'ratio', v: cliArg(args, '--aspect-ratio', '16:9') },
-    ];
-  }
-  if (sub === 'motion-control') {
-    return [
-      { k: 'mode', v: 'motion-control' },
-      { k: 'model', v: 'v5.6' },
-      { k: 'quality', v: cliArg(args, '--quality', '720p') },
-      { k: 'ratio', v: cliArg(args, '--aspect-ratio', '16:9') },
-    ];
-  }
-  if (sub === 'extend') {
-    return [
-      { k: 'mode', v: 'extend' },
-      { k: 'model', v: cliArg(args, '--model', 'v6') },
-    ];
-  }
-  if (sub === 'upscale') {
-    return [
-      { k: 'mode', v: 'upscale' },
-      { k: 'quality', v: cliArg(args, '--quality', '2160p') },
-    ];
-  }
-  if (sub === 'modify') {
-    return [
-      { k: 'mode', v: 'modify' },
-      { k: 'model', v: cliArg(args, '--model', 'v5.5') },
-      { k: 'quality', v: cliArg(args, '--quality', '720p') },
-      { k: 'keyframe', v: `${cliArg(args, '--keyframe-time', '0')}ms` },
-    ];
-  }
-  if (sub === 'voice') {
-    return [
-      { k: 'mode', v: 'voice' },
-      { k: 'model', v: cliArg(args, '--model', 'speech-2.8-hd') },
-      { k: 'language', v: cliArg(args, '--language', 'auto') },
-      { k: 'speed', v: `${cliArg(args, '--speed', '1')}×` },
-    ];
-  }
-  if (sub === 'music') {
-    return [
-      { k: 'mode', v: 'music' },
-      { k: 'model', v: cliArg(args, '--model', 'music-2.6') },
-      { k: 'duration', v: `${cliArg(args, '--duration-seconds', '60')}s` },
-      { k: 'lyrics', v: hasCliFlag(args, '--instrumental') ? 'instrumental' : hasCliFlag(args, '--auto-lyrics') ? 'auto' : 'custom' },
-    ];
-  }
-  if (sub === 'template') {
-    return [
-      { k: 'mode', v: 'template' },
-      { k: 'template', v: cliArg(args, '--template-id', 'required') || 'required' },
-      { k: 'quality', v: cliArg(args, '--quality', '720p') },
-    ];
-  }
-  return [{ k: 'mode', v: sub }];
-}
-
-const GENERATOR_MODEL_PRESETS = {
-  pixverse: PIXVERSE_CREATE_SPECS.image.models,
-  replicate: ['black-forest-labs/flux.1-dev', 'black-forest-labs/flux-schnell'],
-  google: ['imagen-3.0-generate'],
-  openai: ['gpt-image-2.0'],
-  fal: ['fal-ai/flux/dev'],
-};
-
-const MOTION_MODEL_PRESETS = {
-  pixverse: PIXVERSE_CREATE_SPECS.video.models,
-  piapi: ['kling-1.6'],
-  google: ['veo-3.0-generate', 'veo-3.1-lite'],
-  local: ['wan-2.1'],
-  fal: ['fal-ai/kling-video/v1.6/pro/image-to-video'],
-};
-
-function modelPresetsFor(node) {
-  const presets = node.kind === 'motion' ? MOTION_MODEL_PRESETS : GENERATOR_MODEL_PRESETS;
-  return presets[node.provider] || [];
-}
-
-const MODEL_TITLE = {
-  'black-forest-labs/flux.1-dev': 'Flux.1-dev',
-  'black-forest-labs/flux-schnell': 'Flux Schnell',
-  'fal-ai/flux/dev': 'Flux Dev',
-  'imagen-3.0-generate': 'Imagen 3',
-  'gpt-image-2.0': 'GPT Image 2',
-  'qwen-image': 'Qwen Image',
-  'gemini-3.1-flash': 'Nano Banana 2',
-  'gemini-3.1-flash-lite': 'Nano Banana 2 Lite',
-  'seedream-5.0-pro': 'Seedream 5 Pro',
-  'seedream-5.0-lite': 'Seedream 5 Lite',
-  'v6': 'PixVerse v6',
-  'seedance-2.0-standard': 'Seedance 2.0 Standard',
-  'seedance-2.0-fast': 'Seedance 2.0 Fast',
-  'seedance-2.0-mini': 'Seedance 2.0 Mini',
-  'gemini-omni-flash': 'Google Gemini Omni',
-  'grok-imagine-1.5': 'Grok Imagine 1.5',
-  'speech-2.8-hd': 'MiniMax Speech 2.8 HD',
-  'speech-2.8-turbo': 'MiniMax Speech 2.8 Turbo',
-  'music-2.6': 'MiniMax Music 2.6',
-  'music-v1': 'ElevenLabs Music',
-  'lyria-3-pro-preview': 'Google Lyria 3 Pro',
-  'veo-3.0-generate': 'Veo 3',
-  'veo-3.1-lite': 'Veo 3.1 Lite',
-  'kling-1.6': 'Kling 1.6',
-  'wan-2.1': 'Wan 2.1',
-};
-
-function modelDisplayTitle(model) {
-  const id = String(model || '').trim();
-  if (!id) return 'Model';
-  return MODEL_TITLE[id] || id.split('/').filter(Boolean).pop() || id;
-}
-
-function defaultModelForProvider(node, provider) {
-  const presets = node.kind === 'motion' ? MOTION_MODEL_PRESETS : GENERATOR_MODEL_PRESETS;
-  return presets[provider]?.[0] || node.model || '';
-}
-
-function normalizedCount(value, fallback = 1) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(1, Math.floor(n));
-}
-
-function displayPortCount(value, fallback = 1) {
-  return Math.min(12, normalizedCount(value, fallback));
-}
-
-function connectedOutputCount(graph, node) {
-  if (!graph || !node) return 0;
-  let count = 0;
-  (graph.edges || []).forEach(edge => {
-    if (edge.from?.node !== node.id) return;
-    const port = (node.ports || [])[edge.from.port];
-    if (!port || port.side !== 'right') return;
-    const ordinal = (node.ports || [])
-      .slice(0, edge.from.port + 1)
-      .filter(p => p.side === 'right').length;
-    count = Math.max(count, ordinal);
-  });
-  return count;
-}
-
-function outputPortsFor(node, count, kind, graph) {
-  const current = node.ports || [];
-  const left = current.filter(p => p.side === 'left');
-  const firstRight = current.find(p => p.side === 'right');
-  const right = [{
-    kind,
-    side: 'right',
-    top: firstRight?.top || (kind === 'video' ? 58 : 60),
-  }];
-  return [...left, ...right];
-}
-
-function resizedThumbsFor(node, count, kind) {
-  const existing = node.thumbs || [];
-  const n = displayPortCount(count);
-  return Array.from({ length: n }, (_, i) => existing[i] || {
-    seed: `${node.id || kind}-${i + 1}`,
-    label: kind,
-    type: kind,
-    chosen: i === 0,
-  });
-}
-
-function runtimeBadge(node) {
-  if (node.kind === 'gen') {
-    if (node.provider === 'pixverse') return `pixverse · ${node.count || 1}×`;
-    return `api · ${node.count || 1}×`;
-  }
-  if (node.kind === 'motion') {
-    const duration = node.duration || 5;
-    if (node.provider === 'pixverse') return `pixverse · ${duration}s`;
-    return `img→vid · ${duration}s`;
-  }
-  return node.badge;
-}
-
-function runtimeFooter(node) {
-  const previous = node.footer || {};
-  const right = previous.right || '— idle';
-  if (node.kind === 'gen') {
-    if (node.provider === 'pixverse') {
-      const quality = node.quality || '1080p';
-      const ratio = node.aspectRatio || (String(node.size || '').includes(':') ? node.size : '16:9');
-      const count = node.count || 1;
-      return { ...previous, left: `pixverse image · ${quality} · ${ratio} · ${count}×`, right };
-    }
-    const seed = node.seed || 'auto';
-    const steps = node.steps ? ` · ${node.steps} steps` : '';
-    return { ...previous, left: `seed ${seed}${steps}`, right };
-  }
-  if (node.kind === 'motion') {
-    const duration = node.duration || 5;
-    if (node.provider === 'pixverse') {
-      const quality = node.quality || '720p';
-      return { ...previous, left: `pixverse video · ${duration}s · ${quality}`, right };
-    }
-    return { ...previous, left: node.motionPrompt || modelDisplayTitle(node.model), right };
-  }
-  return previous;
-}
-
-function runtimePatchFor(node, patch, graph) {
-  const next = { ...node, ...patch };
-  if (next.kind !== 'gen' && next.kind !== 'motion') return patch;
-  const outKind = next.kind === 'motion' ? 'video' : 'image';
-  const nextPatch = {
-    ...patch,
-    title: modelDisplayTitle(next.model),
-    badge: runtimeBadge(next),
-    footer: runtimeFooter(next),
-  };
-  if (patch.count != null) {
-    nextPatch.ports = outputPortsFor(next, next.count, outKind, graph);
-    nextPatch.thumbs = resizedThumbsFor(next, next.count, outKind);
-  }
-  return nextPatch;
-}
-
-function pixVerseCliPortsFor(node, mode, count, graph) {
-  const outKind = mode === 'audio' ? 'audio' : mode === 'video' ? 'video' : mode === 'asset' ? 'asset' : 'image';
-  return outputPortsFor(node, count, outKind, graph);
-}
-
-// Subcommands that have a user-selectable --model flag
-const PV_HAS_MODEL = new Set(['image','video','transition','reference','extend','modify','voice','music']);
-
-function pixVerseCliPatchFor(node, sub, nextArgs, graph) {
-  const mode = ['voice', 'music'].includes(sub) ? 'audio' : sub === 'image' ? 'image' : sub === 'template' ? 'asset' : 'video';
-  // Only read model for subcommands that actually support --model;
-  // motion-control is fixed to v5.6, upscale has no model flag.
-  const defaultModel = sub === 'image' ? 'gpt-image-2.0'
-    : sub === 'modify' ? 'v5.5'
-    : sub === 'voice' ? 'speech-2.8-hd'
-    : sub === 'music' ? 'music-2.6'
-    : 'v6';
-  const model = PV_HAS_MODEL.has(sub) ? cliArg(nextArgs, '--model', defaultModel) : '';
-  const quality = cliArg(nextArgs, '--quality', sub === 'image' ? '1080p' : '720p');
-  const ratio = cliArg(nextArgs, '--aspect-ratio', '16:9');
-  const count = normalizedCount(cliArg(nextArgs, '--count', '1'));
-  const duration = mode === 'video' ? `${cliArg(nextArgs, '--duration', '5')}s` : null;
-
-  // Build a human-readable footer left string per subcommand
-  let footerLeft;
-  switch (sub) {
-    case 'image':    footerLeft = `pixverse image · ${quality} · ${ratio} · ${count}×`; break;
-    case 'video':    footerLeft = `pixverse video · ${duration} · ${quality} · ${count}×`; break;
-    case 'transition': footerLeft = `pixverse create transition · ${model} · ${quality}`; break;
-    case 'reference':  footerLeft = `pixverse create reference · ${model} · ${quality}`; break;
-    case 'motion-control': footerLeft = `pixverse create motion-control · v5.6 · ${quality}`; break;
-    case 'extend':   footerLeft = `pixverse create extend · ${model}`; break;
-    case 'upscale':  footerLeft = `pixverse create upscale · ${quality}`; break;
-    case 'modify':   footerLeft = `pixverse create modify · ${model} · ${quality}`; break;
-    case 'voice':    footerLeft = `pixverse create voice · ${model}`; break;
-    case 'music':    footerLeft = `pixverse create music · ${model}`; break;
-    case 'template': footerLeft = `pixverse create template · ${cliArg(nextArgs, '--template-id', 'ID required') || 'ID required'}`; break;
-    default:         footerLeft = `pixverse create ${sub}`;
-  }
-
-  return {
-    title: model ? `PixVerse ${sub} · ${modelDisplayTitle(model)}` : `PixVerse ${sub}`,
-    badge: 'cli · pixverse',
-    footer: {
-      ...(node.footer || {}),
-      left: footerLeft,
-      right: node.footer?.right || '— idle',
-    },
-    ports: pixVerseCliPortsFor(node, mode, count, graph),
-    cli: {
-      ...node.cli,
-      args: nextArgs,
-      fields: pixVerseFields(sub, nextArgs),
-    },
-  };
 }
 
 // ============ INSPECTOR ============
@@ -1150,25 +686,22 @@ function Inspector({ t, state, dispatch }) {
             </div>
           </div>
           <div style={{ padding: '12px 14px' }}>
-            <SectionLabel t={t}>Provider status</SectionLabel>
+            <SectionLabel t={t}>Providers</SectionLabel>
             <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {Object.entries(PROVIDER_LABEL).map(([k, label]) => {
-                const set = !!state.config.apiKeys[k];
-                return (
-                  <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FONT_MONO, fontSize: 10.5 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: set ? t.green : t.textMute }}/>
-                    <span style={{ color: t.text, flex: 1 }}>{label}</span>
-                    <span style={{ color: t.textMute }}>{set ? 'key set' : 'no key'}</span>
-                  </div>
-                );
-              })}
+              {providerCatalogList().map(m => (
+                <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FONT_MONO, fontSize: 10.5 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: t.accent }}/>
+                  <span style={{ color: t.text, flex: 1 }}>{m.name}</span>
+                  <span style={{ color: t.textMute }}>{Object.keys(m.capabilities || {}).length} node types</span>
+                </div>
+              ))}
               <div style={{ height: 4 }}/>
-              <SectionLabel t={t}>Local binaries</SectionLabel>
+              <SectionLabel t={t}>Runtime overrides</SectionLabel>
               {Object.entries(state.config.binPaths).map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FONT_MONO, fontSize: 10.5 }}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: t.green }}/>
                   <span style={{ color: t.text, flex: 1 }}>{k}</span>
-                  <span style={{ color: t.textMute, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>{v}</span>
+                  <span style={{ color: t.textMute, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>{v || 'managed'}</span>
                 </div>
               ))}
             </div>
@@ -1180,19 +713,10 @@ function Inspector({ t, state, dispatch }) {
 
   // Node selected
   const isCli = node.kind === 'cli';
-  const isGen = node.kind === 'gen';
-  const isMotion = node.kind === 'motion';
-  const isApi = isGen || isMotion;
-  const isPixVerse = isPixVerseCli(node);
+  const isTask = node.kind === 'task';
   const onPatch = (patch) => dispatch({ type: 'PATCH_GRAPH', fn: g => ({
     ...g, nodes: g.nodes.map(n => n.id === node.id ? { ...n, ...patch } : n),
   })});
-  const patchRuntime = (patch) => onPatch(runtimePatchFor(node, patch, graph));
-  const setProvider = (provider) => patchRuntime({
-    provider,
-    model: defaultModelForProvider(node, provider),
-  });
-  const setModel = (model) => patchRuntime({ model });
 
   // For output nodes: compute ProjectName_01.ext preview name used in both
   // the inspector header and the "Output file" section below.
@@ -1233,9 +757,9 @@ function Inspector({ t, state, dispatch }) {
             cursor: outputPreviewName ? 'default' : 'text',
           }}
         />
-        <Pill bg={isCli ? t.amberBg : isApi ? t.accentBg : t.panel}
-          color={isCli ? t.amber : isApi ? t.accent : t.textMute}
-          border={isCli ? t.amberBg : isApi ? t.accentBorder : t.border}>
+        <Pill bg={isCli ? t.amberBg : isTask ? t.accentBg : t.panel}
+          color={isCli ? t.amber : isTask ? t.accent : t.textMute}
+          border={isCli ? t.amberBg : isTask ? t.accentBorder : t.border}>
           {(node.badge || node.kind).toUpperCase()}
         </Pill>
       </div>
@@ -1277,11 +801,9 @@ function Inspector({ t, state, dispatch }) {
           </div>
         )}
 
-        {isCli && isPixVerse && (
-          <PixVerseSettings t={t} node={node} graph={graph} onPatch={onPatch} dispatch={dispatch}/>
-        )}
+        {isTask && <TaskInspector t={t} node={node} onPatch={onPatch} dispatch={dispatch}/>}
 
-        {isCli && !isPixVerse && (
+        {isCli && (
           <>
             <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
               <SectionLabel t={t}>Binary path</SectionLabel>
@@ -1315,123 +837,6 @@ function Inspector({ t, state, dispatch }) {
                 {'{prev.out}'} → result of left-port input
               </div>
             </div>
-          </>
-        )}
-
-        {isApi && (
-          <>
-            <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-              <SectionLabel t={t}>Provider</SectionLabel>
-              <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
-                <select
-                  value={node.provider || ''}
-                  onChange={(e) => setProvider(e.target.value)}
-                  style={selectStyle(t)}
-                >
-                  {Object.entries(PROVIDER_LABEL).map(([k, label]) => (
-                    <option key={k} value={k}>{label}</option>
-                  ))}
-                </select>
-                <input
-                  value={node.model || ''}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="model-id"
-                  spellCheck={false}
-                  style={inputStyle(t)}
-                />
-              </div>
-              <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {modelPresetsFor(node).map(m => (
-                  <div key={m} onClick={() => setModel(m)} style={{
-                    padding: '4px 7px',
-                    background: node.model === m ? t.accentBg : t.panel,
-                    border: `1px solid ${node.model === m ? t.accentBorder : t.border}`,
-                    color: node.model === m ? t.accent : t.textMid,
-                    borderRadius: 4,
-                    fontFamily: FONT_MONO,
-                    fontSize: 10,
-                    cursor: 'pointer',
-                  }}>{m}</div>
-                ))}
-              </div>
-              <div style={{ marginTop: 8, color: t.textMute, fontFamily: FONT_MONO, fontSize: 10 }}>
-                {node.provider === 'local' ? <><span style={{ color: t.green }}>●</span> local runner</> :
-                  state.config.apiKeys[node.provider] ? <><span style={{ color: t.green }}>●</span> key set</> :
-                  <><span style={{ color: t.red }}>●</span> no api key — <span style={{ color: t.accent, cursor: 'pointer' }} onClick={() => dispatch({ type: 'UI_PATCH', patch: { configOpen: true } })}>set in Config</span></>}
-              </div>
-            </div>
-            {isGen && node.provider === 'pixverse' && (
-              <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-                <SectionLabel t={t}>PixVerse image params</SectionLabel>
-                <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <KV t={t} k="quality" v={node.quality || '1080p'} onChange={(v) => patchRuntime({ quality: v })}/>
-                  <KV t={t} k="ratio" v={node.aspectRatio || '16:9'} onChange={(v) => patchRuntime({ aspectRatio: v })}/>
-                  <NumberKV t={t} k="count" v={node.count || 1} min={1} onCommit={(v) => patchRuntime({ count: v })}/>
-                  <KV t={t} k="seed" v={node.seed === 'auto' ? '' : (node.seed || '')} onChange={(v) => patchRuntime({ seed: v || 'auto' })}/>
-                  <KV t={t} k="detail" v={node.detailLevel || ''} onChange={(v) => onPatch({ detailLevel: v })}/>
-                  <KV t={t} k="timeout" v={node.timeout || 300} onChange={(v) => onPatch({ timeout: Number(v) || 300 })}/>
-                  <KV t={t} k="idempotency" v={node.idempotencyKey || ''} onChange={(v) => onPatch({ idempotencyKey: v })}/>
-                </div>
-                <div style={{ marginTop: 8, display: 'flex', gap: 4 }}>
-                  <ToggleChip t={t} active={!!node.noWait} onClick={() => onPatch({ noWait: !node.noWait })}>no-wait</ToggleChip>
-                </div>
-              </div>
-            )}
-            {isGen && node.provider !== 'pixverse' && (
-              <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-                <SectionLabel t={t}>Params</SectionLabel>
-                <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <NumberKV t={t} k="count" v={node.count || 4} min={1} onCommit={(v) => patchRuntime({ count: v })}/>
-                  <NumberKV t={t} k="steps" v={node.steps || 28} min={1} onCommit={(v) => patchRuntime({ steps: v })}/>
-                  <KV t={t} k="seed" v={node.seed || 'auto'} onChange={(v) => patchRuntime({ seed: v })}/>
-                  <KV t={t} k="size" v={node.size || '1024²'} onChange={(v) => onPatch({ size: v })}/>
-                </div>
-              </div>
-            )}
-            {isMotion && (
-              <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-                <SectionLabel t={t}>Motion</SectionLabel>
-                <textarea
-                  value={node.motionPrompt || ''}
-                  onChange={(e) => onPatch({ motionPrompt: e.target.value })}
-                  placeholder="describe motion"
-                  spellCheck={false}
-                  rows={2}
-                  style={{ ...inputStyle(t), resize: 'vertical', fontFamily: FONT_MONO }}
-                />
-                <div style={{ marginTop: 8, display: 'flex', gap: 4 }}>
-                  {[3, 5, 8, 10].map(d => (
-                    <div key={d} onClick={() => patchRuntime({ duration: d })} style={{
-                      flex: 1, textAlign: 'center', padding: '5px 0',
-                      background: node.duration === d ? t.accentBg : t.panel,
-                      border: `1px solid ${node.duration === d ? t.accentBorder : t.border}`,
-                      color: node.duration === d ? t.accent : t.text,
-                      borderRadius: 4, fontFamily: FONT_MONO, fontSize: 11, cursor: 'pointer',
-                    }}>{d}s</div>
-                  ))}
-                </div>
-                {node.provider === 'pixverse' && (
-                  <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    <KV t={t} k="quality" v={node.quality || '720p'} onChange={(v) => patchRuntime({ quality: v })}/>
-                    <KV t={t} k="ratio" v={node.aspectRatio || '16:9'} onChange={(v) => patchRuntime({ aspectRatio: v })}/>
-                    <NumberKV t={t} k="count" v={node.count || 1} min={1} onCommit={(v) => patchRuntime({ count: v })}/>
-                    <KV t={t} k="seed" v={node.seed === 'auto' ? '' : (node.seed || '')} onChange={(v) => onPatch({ seed: v || 'auto' })}/>
-                    <KV t={t} k="timeout" v={node.timeout || 600} onChange={(v) => onPatch({ timeout: Number(v) || 600 })}/>
-                    <KV t={t} k="idempotency" v={node.idempotencyKey || ''} onChange={(v) => onPatch({ idempotencyKey: v })}/>
-                  </div>
-                )}
-                {node.provider === 'pixverse' && (
-                  <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    <ToggleChip t={t} active={!!node.audio} onClick={() => onPatch({ audio: !node.audio, noAudio: false })}>audio</ToggleChip>
-                    <ToggleChip t={t} active={!!node.noAudio} onClick={() => onPatch({ noAudio: !node.noAudio, audio: false })}>no-audio</ToggleChip>
-                    <ToggleChip t={t} active={!!node.multiShot} onClick={() => onPatch({ multiShot: !node.multiShot, noMultiShot: false })}>multi-shot</ToggleChip>
-                    <ToggleChip t={t} active={!!node.noMultiShot} onClick={() => onPatch({ noMultiShot: !node.noMultiShot, multiShot: false })}>no-multi</ToggleChip>
-                    <ToggleChip t={t} active={!!node.offPeak} onClick={() => onPatch({ offPeak: !node.offPeak })}>off-peak</ToggleChip>
-                    <ToggleChip t={t} active={!!node.noWait} onClick={() => onPatch({ noWait: !node.noWait })}>no-wait</ToggleChip>
-                  </div>
-                )}
-              </div>
-            )}
           </>
         )}
 
@@ -1699,7 +1104,7 @@ function Inspector({ t, state, dispatch }) {
         <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <Btn size="sm" leftIcon="vary" theme="dark" style={{ width: '100%', justifyContent: 'center' }}
             onClick={() => {
-              const newId = makeNodeId(graph, node.kind.slice(0,3));
+              const newId = makeNodeId(graph, nodeIdPrefix(node.kind));
               const copy = JSON.parse(JSON.stringify(node));
               copy.id = newId; copy.x = node.x + 24; copy.y = node.y + 24;
               dispatch({ type: 'PATCH_GRAPH', fn: g => ({ ...g, nodes: [...g.nodes, copy] }) });
@@ -1865,680 +1270,260 @@ function ToggleChip({ t, active, children, onClick }) {
   );
 }
 
-function PixVerseSupportMatrix({ t, mode }) {
-  const spec = pixVerseSpecFor(mode);
+// ── Generator (task) node settings ────────────────────────────────────────────
+// Everything here is driven by the provider manifest (src/providers/*.json):
+// the model list, which params exist, their widgets, options and defaults.
+
+function sectionBox(t) {
+  return { padding: '12px 14px', borderBottom: `1px solid ${t.border}` };
+}
+
+// Text / integer field that commits on blur or Enter. Empty clears the param.
+function ParamInput({ t, spec, value, onCommit }) {
+  const shown = value === undefined || value === null ? '' : String(value);
+  const [draft, setDraft] = React.useState(shown);
+  React.useEffect(() => { setDraft(shown); }, [shown]);
+  const commit = () => {
+    const raw = draft.trim();
+    if (raw === '') { if (shown !== '') onCommit(undefined); return; }
+    if (spec.type === 'int') {
+      const n = Number(raw);
+      if (!Number.isInteger(n) || (spec.min != null && n < spec.min) || (spec.max != null && n > spec.max)) {
+        setDraft(shown);
+        return;
+      }
+      if (n !== value) onCommit(n);
+      return;
+    }
+    if (raw !== shown) onCommit(raw);
+  };
+  const placeholder = spec.default != null ? String(spec.default) : (spec.placeholder || '');
   return (
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Supported modes</SectionLabel>
-      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {spec.modes.map(item => (
-          <div key={item.id} style={{
-            padding: '7px 8px',
-            background: t.panel,
-            border: `1px solid ${t.border}`,
-            borderRadius: 4,
-            fontFamily: FONT_MONO,
-            fontSize: 10.5,
-            lineHeight: 1.45,
-          }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ color: t.accent, fontWeight: 700 }}>{item.id}</span>
-              <span style={{ color: t.text }}>{item.label}</span>
-            </div>
-            <div style={{ marginTop: 3, color: t.textMute }}>
-              required: {item.required.join(', ')}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{
-        marginTop: 8,
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 4,
-      }}>
-        {spec.params.map(param => (
-          <span key={param} style={{
-            padding: '3px 5px',
-            background: t.bg,
-            border: `1px solid ${t.border}`,
-            borderRadius: 4,
-            color: t.textMid,
-            fontFamily: FONT_MONO,
-            fontSize: 9.5,
-          }}>{param}</span>
-        ))}
-      </div>
+    <div>
+      <div style={{ color: t.textMute, fontFamily: FONT_MONO, fontSize: 9.5, letterSpacing: 0.5, textTransform: 'uppercase' }}>{spec.label || spec.key}</div>
+      <input
+        value={draft}
+        placeholder={placeholder}
+        inputMode={spec.type === 'int' ? 'numeric' : undefined}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+        spellCheck={false}
+        style={{ ...inputStyle(t), marginTop: 2 }}
+      />
     </div>
   );
 }
 
-// ── Shared sub-components for PixVerse inspector panels ──────────────────────
-
-function PVCommandHeader({ t, node, sub, onPatch, dispatch }) {
-  return (
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Command</SectionLabel>
-      <div style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input
-          value={(node.cli && node.cli.bin) || 'pixverse'}
-          onChange={(e) => onPatch({ cli: { ...node.cli, bin: e.target.value } })}
-          spellCheck={false}
-          style={{ ...inputStyle(t), flex: 1 }}
-        />
-        <Btn size="sm" theme="dark" leftIcon="settings"
-          onClick={() => dispatch({ type: 'UI_PATCH', patch: { configOpen: true } })}>Config</Btn>
-      </div>
-      <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
-        <span style={{
-          padding: '3px 7px', background: t.amberBg, border: `1px solid ${t.amber}44`,
-          borderRadius: 4, color: t.amber, fontFamily: FONT_MONO, fontSize: 9.5,
-        }}>{sub}</span>
-        <span style={{ color: t.textMute, fontFamily: FONT_MONO, fontSize: 10, alignSelf: 'center' }}>
-          pixverse CLI
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PVModelSelect({ t, args, models, defaultModel, onChange }) {
-  const model = cliArg(args, '--model', defaultModel || models[0] || '');
-  if (!models.length) return null;
-  return (
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Model</SectionLabel>
-      <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {models.map(m => (
-          <div key={m} onClick={() => onChange(m)} style={{
-            padding: '5px 9px',
-            background: model === m ? t.accentBg : t.panel,
-            border: `1px solid ${model === m ? t.accentBorder : t.border}`,
-            color: model === m ? t.accent : t.textMid,
-            borderRadius: 4, fontFamily: FONT_MONO, fontSize: 10, cursor: 'pointer',
-          }}>{m}</div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PVQualityRatio({ t, args, setArg }) {
-  const quality = cliArg(args, '--quality', '720p');
-  const ratio = cliArg(args, '--aspect-ratio', '16:9');
-  const QUALITY_OPTS = ['360p', '480p', '540p', '720p', '1080p', '2160p'];
-  const RATIO_OPTS = ['auto', '16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9'];
+function TaskParamSection({ t, node, name, specs, onSet }) {
+  const enums = specs.filter(s => s.type === 'enum');
+  const fields = specs.filter(s => s.type === 'int' || s.type === 'string');
+  const toggles = specs.filter(s => s.type === 'bool' || s.type === 'tri');
   return (<>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Quality</SectionLabel>
-      <ChipSelect t={t} value={quality} options={QUALITY_OPTS} onChange={(v) => setArg('--quality', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Aspect ratio</SectionLabel>
-      <ChipSelect t={t} value={ratio} options={RATIO_OPTS} onChange={(v) => setArg('--aspect-ratio', v)}/>
-    </div>
+    {enums.map(spec => {
+      const value = taskParamValue(node, spec);
+      const numeric = (spec.options || []).some(o => typeof o === 'number');
+      return (
+        <div key={spec.key} style={sectionBox(t)}>
+          <SectionLabel t={t}>{spec.label || spec.key}</SectionLabel>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+            {(spec.options || []).map(opt => {
+              const active = String(value) === String(opt);
+              return (
+                <div key={opt} onClick={() => onSet(spec, numeric ? Number(opt) : opt)} style={{
+                  padding: '4px 8px',
+                  background: active ? t.accentBg : t.panel,
+                  border: `1px solid ${active ? t.accentBorder : t.border}`,
+                  color: active ? t.accent : t.textMid,
+                  borderRadius: 4, fontFamily: FONT_MONO, fontSize: 10,
+                  cursor: 'pointer', userSelect: 'none',
+                }}>{opt}{spec.unit || ''}</div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    })}
+    {(fields.length > 0 || toggles.length > 0) && (
+      <div style={sectionBox(t)}>
+        <SectionLabel t={t}>{name}</SectionLabel>
+        {fields.length > 0 && (
+          <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {fields.map(spec => (
+              <ParamInput key={spec.key} t={t} spec={spec}
+                value={node[spec.bucket]?.[spec.key]}
+                onCommit={(v) => onSet(spec, v)}/>
+            ))}
+          </div>
+        )}
+        {toggles.length > 0 && (
+          <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {toggles.flatMap(spec => {
+              const value = node[spec.bucket]?.[spec.key];
+              if (spec.type === 'bool') {
+                return [<ToggleChip key={spec.key} t={t} active={value === true}
+                  onClick={() => onSet(spec, value === true ? undefined : true)}>{spec.label || spec.key}</ToggleChip>];
+              }
+              const [on, off] = spec.labels || [spec.key, `no ${spec.key}`];
+              return [
+                <ToggleChip key={`${spec.key}:on`} t={t} active={value === true}
+                  onClick={() => onSet(spec, value === true ? undefined : true)}>{on}</ToggleChip>,
+                <ToggleChip key={`${spec.key}:off`} t={t} active={value === false}
+                  onClick={() => onSet(spec, value === false ? undefined : false)}>{off}</ToggleChip>,
+              ];
+            })}
+          </div>
+        )}
+      </div>
+    )}
   </>);
 }
 
-function PVCliPreview({ t, node, args }) {
+// The command the provider will run, with inputs shown as <port label>.
+function TaskCommandPreview({ t, node }) {
+  const [argv, setArgv] = React.useState(null);
+  const [error, setError] = React.useState('');
+  const key = JSON.stringify([node.capability, node.provider, node.model, node.params, node.provider_params, node.ports, node.prompt]);
+  React.useEffect(() => {
+    if (!window.__TAURI__) return;
+    let live = true;
+    window.__TAURI__.tauri.invoke('preview_task', { node })
+      .then(v => { if (live) { setArgv(v); setError(''); } })
+      .catch(e => { if (live) { setArgv(null); setError(String(e)); } });
+    return () => { live = false; };
+  }, [key]);
+  if (!window.__TAURI__ || (!argv && !error)) return null;
   return (
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
+    <div style={sectionBox(t)}>
       <SectionLabel t={t}>Resolved command</SectionLabel>
       <div style={{
         marginTop: 6, padding: '8px 10px',
-        background: t.panel, border: `1px solid ${t.border}`, borderRadius: 4,
-        color: t.text, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.55,
+        background: t.panel, border: `1px solid ${error ? t.red : t.border}`, borderRadius: 4,
+        color: error ? t.red : t.text, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.55,
         wordBreak: 'break-word',
       }}>
-        <div><span style={{ color: t.green }}>$</span> {node.cli?.cmd || 'pixverse'}</div>
-        {args.map((a, i) => (
-          <div key={i} style={{ paddingLeft: 10, color: t.textMid }}>{a}</div>
-        ))}
+        {error || (<>
+          <div><span style={{ color: t.green }}>$</span> {argv[0]}</div>
+          {argv.slice(1).map((a, i) => (
+            <div key={i} style={{ paddingLeft: 10, color: t.textMid }}>{a}</div>
+          ))}
+        </>)}
       </div>
     </div>
   );
 }
 
-// ── Sub-panels for each PixVerse subcommand ───────────────────────────────────
+function TaskInspector({ t, node, onPatch, dispatch }) {
+  const providers = providersFor(node.capability);
+  const entry = providerCapability(node.provider, node.capability);
+  const specs = taskParamSpecs(node.provider, node.capability);
+  const raw = node.provider_params?._raw_args;
 
-function PVImagePanel({ t, node, args, sub, spec, setArg, setToggle, setExclusiveToggle, onPatch, dispatch, graph, patchArgs }) {
-  const model = cliArg(args, '--model', 'gpt-image-2.0');
-  const quality = cliArg(args, '--quality', '1080p');
-  const ratio = cliArg(args, '--aspect-ratio', '16:9');
-  const QUALITY_OPTS = ['512p', '720p', '1080p', '1440p', '1800p', '2160p'];
-  const RATIO_OPTS = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '2:1', '1:2', '5:4', '4:5', '21:9'];
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="image" onPatch={onPatch} dispatch={dispatch}/>
-    <PVModelSelect t={t} args={args} models={spec.models} defaultModel="gpt-image-2.0" onChange={(m) => setArg('--model', m)}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Quality</SectionLabel>
-      <ChipSelect t={t} value={quality} options={QUALITY_OPTS} onChange={(v) => setArg('--quality', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Aspect ratio</SectionLabel>
-      <ChipSelect t={t} value={ratio} options={RATIO_OPTS} onChange={(v) => setArg('--aspect-ratio', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Generation</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <NumberKV t={t} k="count" v={cliArg(args, '--count', '1')} min={1} onCommit={(v) => setArg('--count', v)}/>
-        <KV t={t} k="seed" v={cliArg(args, '--seed', '')} onChange={(v) => setArg('--seed', v)}/>
-        <KV t={t} k="detail" v={cliArg(args, '--detail-level', '')} onChange={(v) => setArg('--detail-level', v)}/>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Flags</SectionLabel>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-wait')} onClick={() => setToggle('--no-wait', !hasCliFlag(args, '--no-wait'))}>no-wait</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '300')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="idempotency" v={cliArg(args, '--idempotency-key', '')} onChange={(v) => setArg('--idempotency-key', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
+  // Write back the fields a task edit can change (undefined removes `model`).
+  const commit = (next) => onPatch({
+    provider: next.provider, model: next.model,
+    params: next.params, provider_params: next.provider_params,
+    title: next.title, badge: next.badge, footer: next.footer,
+  });
+  const [notice, setNotice] = React.useState('');
+  React.useEffect(() => { setNotice(''); }, [node.id]);
 
-function PVVideoPanel({ t, node, args, sub, spec, setArg, setToggle, setExclusiveToggle, onPatch, dispatch }) {
-  const quality = cliArg(args, '--quality', '720p');
-  const ratio = cliArg(args, '--aspect-ratio', '16:9');
-  const QUALITY_OPTS = ['360p', '480p', '540p', '720p', '1080p', '2160p'];
-  const RATIO_OPTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9'];
-  const DURATION_OPTS = ['3', '4', '5', '6', '8', '10', '12', '15'];
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="video" onPatch={onPatch} dispatch={dispatch}/>
-    <PVModelSelect t={t} args={args} models={spec.models} defaultModel="v6" onChange={(m) => setArg('--model', m)}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Quality</SectionLabel>
-      <ChipSelect t={t} value={quality} options={QUALITY_OPTS} onChange={(v) => setArg('--quality', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Aspect ratio</SectionLabel>
-      <ChipSelect t={t} value={ratio} options={RATIO_OPTS} onChange={(v) => setArg('--aspect-ratio', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Duration</SectionLabel>
-      <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
-        {DURATION_OPTS.map(d => {
-          const cur = cliArg(args, '--duration', '5');
-          const active = String(cur) === String(d);
-          return (
-            <div key={d} onClick={() => setArg('--duration', d)} style={{
-              flex: 1, textAlign: 'center', padding: '5px 0',
-              background: active ? t.accentBg : t.panel,
-              border: `1px solid ${active ? t.accentBorder : t.border}`,
-              color: active ? t.accent : t.text,
-              borderRadius: 4, fontFamily: FONT_MONO, fontSize: 11, cursor: 'pointer',
-            }}>{d}s</div>
-          );
-        })}
+  if (!entry) {
+    return (
+      <div style={sectionBox(t)}>
+        <div style={{ color: t.red, fontFamily: FONT_MONO, fontSize: 10.5, lineHeight: 1.5 }}>
+          Provider “{node.provider}” does not offer {node.capability}.
+        </div>
       </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Generation</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <NumberKV t={t} k="count" v={cliArg(args, '--count', '1')} min={1} onCommit={(v) => setArg('--count', v)}/>
-        <KV t={t} k="seed" v={cliArg(args, '--seed', '')} onChange={(v) => setArg('--seed', v)}/>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Flags</SectionLabel>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--audio')} onClick={() => setExclusiveToggle('--audio', '--no-audio')}>audio</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-audio')} onClick={() => setExclusiveToggle('--no-audio', '--audio')}>no-audio</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--multi-shot')} onClick={() => setExclusiveToggle('--multi-shot', '--no-multi-shot')}>multi-shot</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-multi-shot')} onClick={() => setExclusiveToggle('--no-multi-shot', '--multi-shot')}>no-multi</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--off-peak')} onClick={() => setToggle('--off-peak', !hasCliFlag(args, '--off-peak'))}>off-peak</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-wait')} onClick={() => setToggle('--no-wait', !hasCliFlag(args, '--no-wait'))}>no-wait</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '600')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="idempotency" v={cliArg(args, '--idempotency-key', '')} onChange={(v) => setArg('--idempotency-key', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-function PVTransitionPanel({ t, node, args, spec, setArg, setToggle, setExclusiveToggle, onPatch, dispatch }) {
-  const quality = cliArg(args, '--quality', '720p');
-  const QUALITY_OPTS = ['360p', '480p', '540p', '720p', '1080p', '2160p'];
-  const DURATION_OPTS = ['3', '4', '5', '6', '8', '10', '12', '15'];
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="transition" onPatch={onPatch} dispatch={dispatch}/>
-    <div style={{ padding: '10px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: t.textMute, lineHeight: 1.5 }}>
-        多关键帧过渡：按端口顺序连接 <span style={{ color: t.text }}>frame 1 → frame 2 → frame 3</span>（至少 2 帧），沿关键帧生成过渡视频。<br/>
-        展开为 <code style={{ color: t.text }}>--images f1.jpg f2.jpg …</code>。<br/>
-        Prompt 可用 <span style={{ color: t.accent }}>@image1</span> / <span style={{ color: t.accent }}>@image2</span> 等引用各帧，引导过渡内容。
-      </div>
-    </div>
-    <PVModelSelect t={t} args={args} models={spec.models} defaultModel="v6" onChange={(m) => setArg('--model', m)}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Quality</SectionLabel>
-      <ChipSelect t={t} value={quality} options={QUALITY_OPTS} onChange={(v) => setArg('--quality', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Duration</SectionLabel>
-      <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
-        {DURATION_OPTS.map(d => {
-          const cur = cliArg(args, '--duration', '5');
-          const active = String(cur) === String(d);
-          return (
-            <div key={d} onClick={() => setArg('--duration', d)} style={{
-              flex: 1, textAlign: 'center', padding: '5px 0',
-              background: active ? t.accentBg : t.panel,
-              border: `1px solid ${active ? t.accentBorder : t.border}`,
-              color: active ? t.accent : t.text,
-              borderRadius: 4, fontFamily: FONT_MONO, fontSize: 11, cursor: 'pointer',
-            }}>{d}s</div>
-          );
-        })}
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Generation</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <NumberKV t={t} k="count" v={cliArg(args, '--count', '1')} min={1} onCommit={(v) => setArg('--count', v)}/>
-        <KV t={t} k="seed" v={cliArg(args, '--seed', '')} onChange={(v) => setArg('--seed', v)}/>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Flags</SectionLabel>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--audio')} onClick={() => setExclusiveToggle('--audio', '--no-audio')}>audio</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-audio')} onClick={() => setExclusiveToggle('--no-audio', '--audio')}>no-audio</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--off-peak')} onClick={() => setToggle('--off-peak', !hasCliFlag(args, '--off-peak'))}>off-peak</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-wait')} onClick={() => setToggle('--no-wait', !hasCliFlag(args, '--no-wait'))}>no-wait</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '600')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="idempotency" v={cliArg(args, '--idempotency-key', '')} onChange={(v) => setArg('--idempotency-key', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-function PVReferencePanel({ t, node, args, spec, setArg, setToggle, setExclusiveToggle, onPatch, dispatch }) {
-  const DURATION_OPTS = ['3', '4', '5', '6', '8', '10', '12', '15'];
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="reference" onPatch={onPatch} dispatch={dispatch}/>
-    <div style={{ padding: '10px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: t.textMute, lineHeight: 1.5 }}>
-        接入角色图 + 可选视频/音频参考（音视频参考仅 seedance-2.0）+ Prompt。音频最多 3 段、每段 2–15 秒、总长 ≤15 秒。<br/>
-        连接的图 / 视频 / 音频会展开为 <code style={{ color: t.text }}>--images</code> / <code style={{ color: t.text }}>--videos</code> / <code style={{ color: t.text }}>--audios</code>。<br/>
-        Prompt 中可用 <span style={{ color: t.accent }}>@image1</span> <span style={{ color: t.accent }}>@video1</span> <span style={{ color: t.accent }}>@audio1</span> 引用对应输入，例如：<br/>
-        <span style={{ color: t.textMid }}>"@image1 follows the motion in @video1"</span>
-      </div>
-    </div>
-    <PVModelSelect t={t} args={args} models={spec.models} defaultModel="v6" onChange={(m) => setArg('--model', m)}/>
-    <PVQualityRatio t={t} args={args} setArg={setArg}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Duration</SectionLabel>
-      <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
-        {DURATION_OPTS.map(d => {
-          const cur = cliArg(args, '--duration', '5');
-          const active = String(cur) === String(d);
-          return (
-            <div key={d} onClick={() => setArg('--duration', d)} style={{
-              flex: 1, textAlign: 'center', padding: '5px 0',
-              background: active ? t.accentBg : t.panel,
-              border: `1px solid ${active ? t.accentBorder : t.border}`,
-              color: active ? t.accent : t.text,
-              borderRadius: 4, fontFamily: FONT_MONO, fontSize: 11, cursor: 'pointer',
-            }}>{d}s</div>
-          );
-        })}
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Generation</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <NumberKV t={t} k="count" v={cliArg(args, '--count', '1')} min={1} onCommit={(v) => setArg('--count', v)}/>
-        <KV t={t} k="seed" v={cliArg(args, '--seed', '')} onChange={(v) => setArg('--seed', v)}/>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Flags</SectionLabel>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--audio')} onClick={() => setExclusiveToggle('--audio', '--no-audio')}>audio</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-audio')} onClick={() => setExclusiveToggle('--no-audio', '--audio')}>no-audio</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--off-peak')} onClick={() => setToggle('--off-peak', !hasCliFlag(args, '--off-peak'))}>off-peak</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-wait')} onClick={() => setToggle('--no-wait', !hasCliFlag(args, '--no-wait'))}>no-wait</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '600')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="idempotency" v={cliArg(args, '--idempotency-key', '')} onChange={(v) => setArg('--idempotency-key', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-function PVMotionControlPanel({ t, node, args, spec, setArg, setToggle, onPatch, dispatch }) {
-  const quality = cliArg(args, '--quality', '720p');
-  // motion-control does NOT support --aspect-ratio or --duration
-  const QUALITY_OPTS = ['360p', '540p', '720p', '1080p'];
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="motion-control" onPatch={onPatch} dispatch={dispatch}/>
-    <div style={{ padding: '10px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: t.textMute, lineHeight: 1.5 }}>
-        <span style={{ color: t.text }}>char</span>（图像）+ <span style={{ color: t.text }}>motion</span>（参考视频）→ 人物按参考动作生成视频。<br/>
-        模型固定为 <span style={{ color: t.accent }}>v5.6</span>，不支持 aspect-ratio / duration。
-      </div>
-    </div>
-    <PVModelSelect t={t} args={args} models={spec.models} defaultModel="v5.6" onChange={(m) => setArg('--model', m)}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Quality</SectionLabel>
-      <ChipSelect t={t} value={quality} options={QUALITY_OPTS} onChange={(v) => setArg('--quality', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Generation</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <NumberKV t={t} k="count" v={cliArg(args, '--count', '1')} min={1} onCommit={(v) => setArg('--count', v)}/>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Flags</SectionLabel>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--off-peak')} onClick={() => setToggle('--off-peak', !hasCliFlag(args, '--off-peak'))}>off-peak</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-wait')} onClick={() => setToggle('--no-wait', !hasCliFlag(args, '--no-wait'))}>no-wait</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '600')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="idempotency" v={cliArg(args, '--idempotency-key', '')} onChange={(v) => setArg('--idempotency-key', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-function PVExtendPanel({ t, node, args, spec, setArg, setToggle, setExclusiveToggle, onPatch, dispatch }) {
-  const quality = cliArg(args, '--quality', '720p');
-  const QUALITY_OPTS = ['360p', '540p', '720p', '1080p'];
-  const DURATION_OPTS = ['3', '5', '8', '10'];
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="extend" onPatch={onPatch} dispatch={dispatch}/>
-    <div style={{ padding: '10px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: t.textMute, lineHeight: 1.5 }}>
-        接入上游视频延长其时长。可选接 <span style={{ color: t.text }}>Prompt</span> 节点引导延长方向。<br/>
-        视频云端 ID 自动从上游结果提取（<code>--video</code>）。
-      </div>
-    </div>
-    <PVModelSelect t={t} args={args} models={spec.models} defaultModel="v6" onChange={(m) => setArg('--model', m)}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Quality</SectionLabel>
-      <ChipSelect t={t} value={quality} options={QUALITY_OPTS} onChange={(v) => setArg('--quality', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Duration (extension)</SectionLabel>
-      <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
-        {DURATION_OPTS.map(d => {
-          const cur = cliArg(args, '--duration', '5');
-          const active = String(cur) === String(d);
-          return (
-            <div key={d} onClick={() => setArg('--duration', d)} style={{
-              flex: 1, textAlign: 'center', padding: '5px 0',
-              background: active ? t.accentBg : t.panel,
-              border: `1px solid ${active ? t.accentBorder : t.border}`,
-              color: active ? t.accent : t.text,
-              borderRadius: 4, fontFamily: FONT_MONO, fontSize: 11, cursor: 'pointer',
-            }}>{d}s</div>
-          );
-        })}
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Generation</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <NumberKV t={t} k="count" v={cliArg(args, '--count', '1')} min={1} onCommit={(v) => setArg('--count', v)}/>
-        <KV t={t} k="seed" v={cliArg(args, '--seed', '')} onChange={(v) => setArg('--seed', v)}/>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Flags</SectionLabel>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--audio')} onClick={() => setExclusiveToggle('--audio', '--no-audio')}>audio</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-audio')} onClick={() => setExclusiveToggle('--no-audio', '--audio')}>no-audio</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--off-peak')} onClick={() => setToggle('--off-peak', !hasCliFlag(args, '--off-peak'))}>off-peak</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-wait')} onClick={() => setToggle('--no-wait', !hasCliFlag(args, '--no-wait'))}>no-wait</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '600')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="idempotency" v={cliArg(args, '--idempotency-key', '')} onChange={(v) => setArg('--idempotency-key', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-function PVUpscalePanel({ t, node, args, spec, setArg, onPatch, dispatch }) {
-  const quality = cliArg(args, '--quality', '2160p');
-  // CLI 1.2.10: --quality only accepts 2160p (its default)
-  const QUALITY_OPTS = ['2160p'];
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="upscale" onPatch={onPatch} dispatch={dispatch}/>
-    <div style={{ padding: '10px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: t.textMute, lineHeight: 1.5 }}>
-        Connect an upstream video to upscale its resolution to 2160p (4K).
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Target quality</SectionLabel>
-      <ChipSelect t={t} value={quality} options={QUALITY_OPTS} onChange={(v) => setArg('--quality', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '600')} onChange={(v) => setArg('--timeout', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-function PVModifyPanel({ t, node, args, spec, setArg, setToggle, onPatch, dispatch }) {
-  const quality = cliArg(args, '--quality', '720p');
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="modify" onPatch={onPatch} dispatch={dispatch}/>
-    <div style={{ padding: '10px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: t.textMute, lineHeight: 1.5 }}>
-        修改上游视频，可接最多 5 张参考图并在提示词中用 <span style={{ color: t.accent }}>@image1</span> 等引用。模型固定为 v5.5。
-      </div>
-    </div>
-    <PVModelSelect t={t} args={args} models={spec.models} defaultModel="v5.5" onChange={(m) => setArg('--model', m)}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Quality</SectionLabel>
-      <ChipSelect t={t} value={quality} options={['360p', '480p', '540p', '720p', '1080p']} onChange={(v) => setArg('--quality', v)}/>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Generation</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <NumberKV t={t} k="count" v={cliArg(args, '--count', '1')} min={1} onCommit={(v) => setArg('--count', v)}/>
-        <NumberKV t={t} k="keyframe ms" v={cliArg(args, '--keyframe-time', '0')} min={0} onCommit={(v) => setArg('--keyframe-time', v)}/>
-        <KV t={t} k="seed" v={cliArg(args, '--seed', '')} onChange={(v) => setArg('--seed', v)}/>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Flags</SectionLabel>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--off-peak')} onClick={() => setToggle('--off-peak', !hasCliFlag(args, '--off-peak'))}>off-peak</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-wait')} onClick={() => setToggle('--no-wait', !hasCliFlag(args, '--no-wait'))}>no-wait</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '600')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="idempotency" v={cliArg(args, '--idempotency-key', '')} onChange={(v) => setArg('--idempotency-key', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-function PVVoicePanel({ t, node, args, spec, setArg, setExclusiveToggle, onPatch, dispatch }) {
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="voice" onPatch={onPatch} dispatch={dispatch}/>
-    <div style={{ padding: '10px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: t.textMute, lineHeight: 1.5 }}>
-        将上游 Prompt 合成为独立音频。旧版 lip-sync <code>create speech</code> 已被 CLI 删除；voice 不再需要视频输入。
-      </div>
-    </div>
-    <PVModelSelect t={t} args={args} models={spec.models} defaultModel="speech-2.8-hd" onChange={(m) => setArg('--model', m)}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Voice</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="preset voice ID" v={cliArg(args, '--voice-id', '')} onChange={(v) => setArg('--voice-id', v)}/>
-        <KV t={t} k="provider voice ID" v={cliArg(args, '--provider-voice-id', '')} onChange={(v) => setArg('--provider-voice-id', v)}/>
-        <KV t={t} k="language" v={cliArg(args, '--language', 'auto')} onChange={(v) => setArg('--language', v)}/>
-        <KV t={t} k="emotion" v={cliArg(args, '--emotion', '')} onChange={(v) => setArg('--emotion', v)}/>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Voice tuning</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="speed" v={cliArg(args, '--speed', '1')} onChange={(v) => setArg('--speed', v)}/>
-        <KV t={t} k="volume" v={cliArg(args, '--volume', '')} onChange={(v) => setArg('--volume', v)}/>
-        <KV t={t} k="pitch" v={cliArg(args, '--pitch', '')} onChange={(v) => setArg('--pitch', v)}/>
-        <KV t={t} k="stability" v={cliArg(args, '--stability', '')} onChange={(v) => setArg('--stability', v)}/>
-        <KV t={t} k="similarity" v={cliArg(args, '--similarity-boost', '')} onChange={(v) => setArg('--similarity-boost', v)}/>
-        <KV t={t} k="style" v={cliArg(args, '--style', '')} onChange={(v) => setArg('--style', v)}/>
-      </div>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--use-speaker-boost')} onClick={() => setExclusiveToggle('--use-speaker-boost', '--no-use-speaker-boost')}>speaker boost</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-use-speaker-boost')} onClick={() => setExclusiveToggle('--no-use-speaker-boost', '--use-speaker-boost')}>no boost</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="output path" v={cliArg(args, '--output', '')} onChange={(v) => setArg('--output', v)}/>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '300')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="request ID" v={cliArg(args, '--client-request-id', '')} onChange={(v) => setArg('--client-request-id', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-function PVMusicPanel({ t, node, args, spec, setArg, setToggle, setExclusiveToggle, onPatch, dispatch }) {
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="music" onPatch={onPatch} dispatch={dispatch}/>
-    <div style={{ padding: '10px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: t.textMute, lineHeight: 1.5 }}>
-        生成独立音乐音频。CLI 1.2.9 中 instrumental 优先级最高；auto-lyrics 开启时会忽略手写 lyrics。Lyria 可使用上游参考图。
-      </div>
-    </div>
-    <PVModelSelect t={t} args={args} models={spec.models} defaultModel="music-2.6" onChange={(m) => setArg('--model', m)}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Lyrics</SectionLabel>
-      <div style={{ marginTop: 6 }}>
-        <KV t={t} k="lyrics / file path" v={cliArg(args, '--lyrics', '')} onChange={(v) => setArg('--lyrics', v)}/>
-      </div>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--instrumental')} onClick={() => setExclusiveToggle('--instrumental', '--auto-lyrics')}>instrumental</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--auto-lyrics')} onClick={() => setExclusiveToggle('--auto-lyrics', '--instrumental')}>auto lyrics</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-duration-auto')} onClick={() => setToggle('--no-duration-auto', !hasCliFlag(args, '--no-duration-auto'))}>fixed duration</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-wait')} onClick={() => setToggle('--no-wait', !hasCliFlag(args, '--no-wait'))}>no-wait</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Generation</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <NumberKV t={t} k="duration seconds" v={cliArg(args, '--duration-seconds', '60')} min={10} max={240} onCommit={(v) => setArg('--duration-seconds', v)}/>
-        <KV t={t} k="output path" v={cliArg(args, '--output', '')} onChange={(v) => setArg('--output', v)}/>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '300')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="request ID" v={cliArg(args, '--client-request-id', '')} onChange={(v) => setArg('--client-request-id', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-function PVTemplatePanel({ t, node, args, setArg, setToggle, onPatch, dispatch }) {
-  return (<>
-    <PVCommandHeader t={t} node={node} sub="template" onPatch={onPatch} dispatch={dispatch}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Template</SectionLabel>
-      <div style={{ marginTop: 6 }}>
-        <KV t={t} k="template ID (required)" v={cliArg(args, '--template-id', '')} onChange={(v) => setArg('--template-id', v)}/>
-      </div>
-    </div>
-    <PVQualityRatio t={t} args={args} setArg={setArg}/>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Generation</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <NumberKV t={t} k="duration" v={cliArg(args, '--duration', '5')} min={1} onCommit={(v) => setArg('--duration', v)}/>
-        <NumberKV t={t} k="count" v={cliArg(args, '--count', '1')} min={1} max={4} onCommit={(v) => setArg('--count', v)}/>
-        <KV t={t} k="seed" v={cliArg(args, '--seed', '')} onChange={(v) => setArg('--seed', v)}/>
-      </div>
-      <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <ToggleChip t={t} active={hasCliFlag(args, '--off-peak')} onClick={() => setToggle('--off-peak', !hasCliFlag(args, '--off-peak'))}>off-peak</ToggleChip>
-        <ToggleChip t={t} active={hasCliFlag(args, '--no-wait')} onClick={() => setToggle('--no-wait', !hasCliFlag(args, '--no-wait'))}>no-wait</ToggleChip>
-      </div>
-    </div>
-    <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
-      <SectionLabel t={t}>Advanced</SectionLabel>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <KV t={t} k="timeout" v={cliArg(args, '--timeout', '600')} onChange={(v) => setArg('--timeout', v)}/>
-        <KV t={t} k="idempotency" v={cliArg(args, '--idempotency-key', '')} onChange={(v) => setArg('--idempotency-key', v)}/>
-      </div>
-    </div>
-    <PVCliPreview t={t} node={node} args={args}/>
-  </>);
-}
-
-// ── Main PixVerse settings dispatcher ─────────────────────────────────────────
-function PixVerseSettings({ t, node, graph, onPatch, dispatch }) {
-  const args = node.cli?.args || [];
-  const sub = pixVerseSubcommand(node);
-  const spec = pixVerseSpecFor(sub);
-  const patchArgs = (nextArgs) => onPatch(pixVerseCliPatchFor(node, sub, nextArgs, graph));
-  const setArg = (flag, value) => patchArgs(upsertCliArg(args, flag, value));
-  const setToggle = (flag, enabled) => patchArgs(setCliToggle(args, flag, enabled));
-  const setExclusiveToggle = (flag, opposite) => {
-    const enabled = !hasCliFlag(args, flag);
-    const withoutOpposite = setCliToggle(args, opposite, false);
-    patchArgs(setCliToggle(withoutOpposite, flag, enabled));
-  };
-
-  const shared = { t, node, args, sub, spec, setArg, setToggle, setExclusiveToggle, onPatch, dispatch, graph, patchArgs };
-
-  switch (sub) {
-    case 'image':          return <PVImagePanel {...shared}/>;
-    case 'video':          return <PVVideoPanel {...shared}/>;
-    case 'transition':     return <PVTransitionPanel {...shared}/>;
-    case 'reference':      return <PVReferencePanel {...shared}/>;
-    case 'motion-control': return <PVMotionControlPanel {...shared}/>;
-    case 'extend':         return <PVExtendPanel {...shared}/>;
-    case 'upscale':        return <PVUpscalePanel {...shared}/>;
-    case 'modify':         return <PVModifyPanel {...shared}/>;
-    case 'voice':          return <PVVoicePanel {...shared}/>;
-    case 'music':          return <PVMusicPanel {...shared}/>;
-    case 'template':       return <PVTemplatePanel {...shared}/>;
-    default:               return <PVVideoPanel {...shared}/>;
+    );
   }
+
+  const sections = [];
+  specs.forEach(spec => {
+    const name = spec.section || 'Settings';
+    let group = sections.find(g => g.name === name);
+    if (!group) sections.push(group = { name, specs: [] });
+    group.specs.push(spec);
+  });
+  const models = entry.models || [];
+  const customModel = node.model && !models.includes(node.model);
+
+  return (<>
+    <div style={sectionBox(t)}>
+      <SectionLabel t={t}>Provider</SectionLabel>
+      <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
+        <select
+          value={node.provider}
+          disabled={providers.length < 2}
+          onChange={(e) => {
+            const { node: next, dropped } = switchTaskProvider(node, e.target.value);
+            commit(next);
+            setNotice(dropped.length ? `Removed settings ${providerName(next.provider)} doesn't support: ${dropped.join(', ')}` : '');
+          }}
+          style={{ ...selectStyle(t), flex: 1 }}
+        >
+          {providers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+        <Btn size="sm" theme="dark" leftIcon="settings"
+          onClick={() => dispatch({ type: 'UI_PATCH', patch: { configOpen: true } })}>Config</Btn>
+      </div>
+      {notice && (
+        <div style={{ marginTop: 6, color: t.amber, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.5 }}>{notice}</div>
+      )}
+    </div>
+
+    {raw && (
+      <div style={sectionBox(t)}>
+        <SectionLabel t={t}>Custom command</SectionLabel>
+        <div style={{ marginTop: 6, color: t.amber, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.5 }}>
+          This node was created with a hand-edited {providerName(node.provider)} command that could not be
+          converted to settings. It still runs exactly as before; reset it to edit settings here.
+        </div>
+        <div style={{
+          marginTop: 6, padding: '6px 8px', background: t.panel, border: `1px solid ${t.border}`,
+          borderRadius: 4, color: t.textMid, fontFamily: FONT_MONO, fontSize: 10, wordBreak: 'break-word',
+        }}>{raw.join(' ')}</div>
+        <Btn size="sm" theme="dark" style={{ marginTop: 8 }}
+          onClick={() => {
+            const fresh = spawnTaskNode(node.capability, node.provider);
+            commit({ ...node, ...fresh, footer: { ...fresh.footer, right: node.footer?.right || '— idle' } });
+          }}>Reset to standard settings</Btn>
+      </div>
+    )}
+
+    {!raw && models.length > 0 && (
+      <div style={sectionBox(t)}>
+        <SectionLabel t={t}>Model</SectionLabel>
+        <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {[...models, ...(customModel ? [node.model] : [])].map(m => {
+            const active = node.model === m;
+            return (
+              <div key={m} title={m} onClick={() => commit(setTaskModel(node, m))} style={{
+                padding: '5px 9px',
+                background: active ? t.accentBg : t.panel,
+                border: `1px solid ${active ? t.accentBorder : t.border}`,
+                color: active ? t.accent : t.textMid,
+                borderRadius: 4, fontFamily: FONT_MONO, fontSize: 10, cursor: 'pointer',
+              }}>{m}{m === node.model && customModel ? ' (custom)' : ''}</div>
+            );
+          })}
+        </div>
+      </div>
+    )}
+
+    {entry.help && (
+      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${t.border}` }}>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: t.textMute, lineHeight: 1.5 }}>{entry.help}</div>
+      </div>
+    )}
+
+    {!raw && sections.map(section => (
+      <TaskParamSection key={section.name} t={t} node={node} name={section.name} specs={section.specs}
+        onSet={(spec, value) => commit(setTaskParam(node, spec, value))}/>
+    ))}
+
+    <TaskCommandPreview t={t} node={node}/>
+  </>);
 }
 
 function Stat({ t, k, v, sub }) {
@@ -2762,22 +1747,6 @@ function ConfigModal({ t, state, dispatch }) {
           </div>
         </div>
         <div className="mg-scroll" style={{ flex: 1, overflow: 'auto', padding: '14px 18px' }}>
-          <div style={{ marginBottom: 16 }}>
-            <div style={{
-              color: t.textMute, fontFamily: FONT_MONO, fontSize: 9.5,
-              letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8,
-            }}>API keys</div>
-            {Object.entries(PROVIDER_LABEL).map(([k, label]) => (
-              <ConfigRow key={k} t={t}
-                label={label}
-                hint={`${k.toUpperCase()}_API_KEY`}
-                value={state.config.apiKeys[k] || ''}
-                mask
-                onChange={(v) => dispatch({ type: 'SET_API_KEY', key: k, value: v })}
-              />
-            ))}
-          </div>
-
           <ManagedRuntimePanel t={t} state={state}/>
 
           <div style={{ marginBottom: 16 }}>
@@ -2801,18 +1770,6 @@ function ConfigModal({ t, state, dispatch }) {
             </div>
           </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <div style={{
-              color: t.textMute, fontFamily: FONT_MONO, fontSize: 9.5,
-              letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8,
-            }}>Defaults</div>
-            <ConfigRow t={t}
-              label="Default model"
-              hint="used by new generator nodes"
-              value={state.config.defaultModel}
-              onChange={(v) => dispatch({ type: 'SET_CONFIG', patch: { defaultModel: v } })}
-            />
-          </div>
         </div>
         <div style={{
           padding: '12px 18px',

@@ -5,6 +5,7 @@
 // frontend as an `mcp:op` event, applied there by src/mcp-bridge.jsx against
 // the live canvas, and answered back through the `mcp_response` command.
 
+use crate::providers::catalog;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,7 +17,8 @@ const DEFAULT_PORT: u16 = 4923;
 const OP_TIMEOUT: Duration = Duration::from_secs(30);
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
-const TOOL_NAMES: [&str; 10] = [
+const TOOL_NAMES: [&str; 11] = [
+    "describe_capabilities",
     "list_projects",
     "create_project",
     "switch_project",
@@ -32,10 +34,11 @@ const TOOL_NAMES: [&str; 10] = [
 const SERVER_INSTRUCTIONS: &str = "Beatboard is a multi-project node-graph canvas for AI media \
 generation, open on the user's desktop — every change you make is visible to \
 them live. Use list_projects to inspect canvases; create_project, switch_project, and \
-delete_project manage them. Typical graph flow: get_graph to orient → add_node for inputs (prompt, \
-asset) and generators (image, video, transition, …) → connect_nodes to wire \
+delete_project manage them. Typical graph flow: get_graph to orient → describe_capabilities to \
+see generator types, their input ports, models and params → add_node for inputs (prompt, asset) \
+and generators (image.generate, video.generate, video.transition, …) → connect_nodes to wire \
 inputs into generator ports → run_node → poll get_node_result until 'done', \
-then use the returned local file paths. Image, video, voice, and music generation runs on the PixVerse cloud \
+then use the returned local file paths. Generation runs on a cloud provider (PixVerse) \
 and takes 1–5 minutes per node; ffmpeg_compose concatenates videos locally. \
 The user can also edit and run the canvas themselves at any time.";
 
@@ -79,20 +82,41 @@ fn call_frontend(app: &AppHandle, tool: &str, args: &Value) -> Value {
 fn tool_definitions() -> Value {
     let params_schema = json!({
         "type": "object",
-        "description": "Node parameters. Accepted keys depend on the node type: \
-            `title` (any node); `prompt` (prompt + generator nodes); \
+        "description": "Node parameters. `title` (any node); `prompt` (prompt + generator nodes); \
             `path` (asset nodes — absolute local file path of an image/video/audio); \
-            `model`, `quality`, `aspect_ratio`, `duration`, `duration_seconds`, `count`, `seed`, `timeout`, \
-            `detail_level`, `lyrics`, `voice_id`, `provider_voice_id`, `language`, `speed`, `emotion`, \
-            `stability`, `similarity_boost`, `style`, `volume`, `pitch`, `client_request_id`, \
-            `keyframe_time`, `template_id`, `idempotency_key`, `output`, `audio`, `multi_shot`, `off_peak`, \
-            `instrumental`, `auto_lyrics`, `no_duration_auto`, `use_speaker_boost`, `no_wait` \
-            (PixVerse generator nodes; e.g. model 'gpt-image-2.0' for image, 'v6' for video, \
-            quality '720p'/'1080p' — except upscale which only accepts '2160p', \
-            aspect_ratio '16:9', duration seconds, count = variants); \
-            `selected_index` (pick nodes)."
+            `selected_index` (pick nodes). Generator nodes: `provider` (default: the first provider \
+            supporting the capability), `model`, and the capability's params exactly as listed by \
+            describe_capabilities (e.g. `resolution`, `aspect_ratio`, `duration_s`, `count`, `seed`, \
+            `audio`, `off_peak`, `timeout`). Legacy names `quality`, `duration` and \
+            `duration_seconds` are still accepted. Unknown keys are rejected."
     });
+    let mut node_types: Vec<String> = ["prompt", "asset", "pick", "ffmpeg_compose", "output"]
+        .map(String::from)
+        .to_vec();
+    for (id, cap) in catalog::capabilities() {
+        node_types.push(id.clone());
+        for alias in cap["aliases"].as_array().into_iter().flatten() {
+            if let Some(alias) = alias.as_str() {
+                node_types.push(alias.to_string());
+            }
+        }
+    }
+    let generator_list = catalog::capabilities()
+        .iter()
+        .map(|(id, cap)| format!("`{id}` ({})", cap["title"].as_str().unwrap_or(id)))
+        .collect::<Vec<_>>()
+        .join(", ");
     json!([
+        {
+            "name": "describe_capabilities",
+            "description": "List generator node types (capabilities): their input ports, output kind, and for each provider the models, default model and accepted params (type, options, default). Call this before add_node / set_params on a generator.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "capability": { "type": "string", "description": "Optional capability or alias (e.g. 'video.generate' or 'video') to describe just one" }
+                }
+            }
+        },
         {
             "name": "list_projects",
             "description": "List every Beatboard canvas project with its stable id, name, active state, output directory, and graph size. Call this before switching or deleting a project.",
@@ -140,19 +164,16 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "add_node",
-            "description": "Add a node to the canvas. Types — inputs: `prompt` (text prompt), `asset` (local image/video/audio file, set params.path); \
-                generators (PixVerse cloud): `image` (text-to-image, or image-to-image fusing multiple connected refs), `video` (text/image-to-video), \
-                `transition` (keyframe transition video across the connected frames in port order, 2+ required, ports 'frame 1'…'frame 3'), \
-                `reference` (generate from multiple reference images/videos/audio), `motion_control` (drive a character image with a motion video), \
-                `extend` / `modify` (operate on an upstream video) / `upscale` (upstream video → 2160p), \
-                `voice` (text-to-speech audio), `music` (prompt-to-music audio), `template` (PixVerse template/effect); \
+            "description": format!("Add a node to the canvas. Types — inputs: `prompt` (text prompt), `asset` (local image/video/audio file, set params.path); \
+                generators: {generator_list} — see describe_capabilities for their ports, models and params; \
+                the legacy short names (`image`, `video`, `transition`, `reference`, `motion_control`, `extend`, `upscale`, `modify`, `voice`, `music`, `template`) still work; \
                 other: `pick` (human selects among upstream candidates — pauses the run until the user clicks), \
                 `ffmpeg_compose` (concatenate connected video clips locally), `output` (final sink). \
-                Returns the new node_id and its input port labels.",
+                Returns the new node_id and its input port labels."),
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "type": { "type": "string", "enum": ["prompt", "asset", "image", "video", "transition", "reference", "motion_control", "extend", "upscale", "modify", "voice", "music", "template", "pick", "ffmpeg_compose", "output"] },
+                    "type": { "type": "string", "enum": node_types },
                     "params": params_schema,
                     "x": { "type": "number", "description": "Canvas position (optional, auto-laid-out if omitted)" },
                     "y": { "type": "number" }
@@ -257,7 +278,12 @@ fn handle_message(app: &AppHandle, msg: &Value) -> Option<Value> {
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let reply = call_frontend(app, name, &args);
+            let reply = if name == "describe_capabilities" {
+                let capability = args.get("capability").and_then(|v| v.as_str());
+                catalog::describe(capability).unwrap_or_else(|e| json!({ "error": e }))
+            } else {
+                call_frontend(app, name, &args)
+            };
             let is_error = reply.get("error").is_some();
             let text = serde_json::to_string_pretty(&reply).unwrap_or_else(|_| reply.to_string());
             json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })

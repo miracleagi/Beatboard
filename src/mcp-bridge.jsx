@@ -5,65 +5,21 @@
 // uses, then replies via the `mcp_response` command. The agent and the
 // user are therefore editing the exact same graph, with undo intact.
 
-// Agent-facing node type → palette template title (NODE_TEMPLATES in state.jsx)
+// Agent-facing non-generator node types → palette template title
+// (NODE_TEMPLATES in state.jsx). Generator types are capabilities from the
+// provider catalog (e.g. `video.generate`), or their legacy aliases (`video`).
 const MCP_NODE_TYPES = {
   prompt: 'Prompt',
   asset: 'Asset / Reference',
-  image: 'PixVerse · image',
-  video: 'PixVerse · video',
-  transition: 'PixVerse · transition',
-  reference: 'PixVerse · reference',
-  motion_control: 'PixVerse · motion control',
-  extend: 'PixVerse · extend',
-  upscale: 'PixVerse · upscale',
-  modify: 'PixVerse · modify',
-  voice: 'PixVerse · voice',
-  music: 'PixVerse · music',
-  template: 'PixVerse · template',
   pick: 'Pick · manual',
   ffmpeg_compose: 'ffmpeg · compose',
   output: 'Output',
 };
 
-// Param key → PixVerse CLI flag (rewritten in cli.args)
-const MCP_CLI_FLAGS = {
-  model: '--model',
-  quality: '--quality',
-  aspect_ratio: '--aspect-ratio',
-  duration: '--duration',
-  count: '--count',
-  seed: '--seed',
-  timeout: '--timeout',
-  detail_level: '--detail-level',
-  keyframe_time: '--keyframe-time',
-  duration_seconds: '--duration-seconds',
-  lyrics: '--lyrics',
-  voice_id: '--voice-id',
-  provider_voice_id: '--provider-voice-id',
-  language: '--language',
-  stability: '--stability',
-  similarity_boost: '--similarity-boost',
-  style: '--style',
-  speed: '--speed',
-  volume: '--volume',
-  pitch: '--pitch',
-  emotion: '--emotion',
-  client_request_id: '--client-request-id',
-  idempotency_key: '--idempotency-key',
-  template_id: '--template-id',
-  output: '--output',
-};
-
-const MCP_CLI_TOGGLES = {
-  audio: ['--audio', '--no-audio', true],
-  multi_shot: ['--multi-shot', '--no-multi-shot', true],
-  off_peak: ['--off-peak'],
-  instrumental: ['--instrumental', '--auto-lyrics'],
-  auto_lyrics: ['--auto-lyrics', '--instrumental'],
-  no_duration_auto: ['--no-duration-auto'],
-  use_speaker_boost: ['--use-speaker-boost', '--no-use-speaker-boost', true],
-  no_wait: ['--no-wait'],
-};
+function mcpValidTypes() {
+  const aliases = capabilityIds().flatMap(id => capabilityInfo(id).aliases || []);
+  return [...Object.keys(MCP_NODE_TYPES), ...capabilityIds(), ...aliases];
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -112,22 +68,23 @@ function mcpLocalPath(value) {
 }
 
 function mcpNodeType(node) {
+  if (node.kind === 'task') return node.capability;
   if (node.kind === 'cli') {
     const bin = String(node.cli?.cmd || node.cli?.bin || '').trim().split(/\s+/)[0].split(/[\\/]/).pop();
-    if (bin === 'ffmpeg') return 'ffmpeg_compose';
-    if (bin === 'pixverse') {
-      const sub = node.cli?.args?.[1] || 'image';
-      return {
-        'image': 'image', 'video': 'video', 'transition': 'transition',
-        'reference': 'reference', 'motion-control': 'motion_control',
-        'extend': 'extend', 'upscale': 'upscale', 'modify': 'modify',
-        'voice': 'voice', 'music': 'music', 'template': 'template',
-      }[sub] || 'image';
-    }
-    return 'cli';
+    return bin === 'ffmpeg' ? 'ffmpeg_compose' : 'cli';
   }
   if (node.kind === 'select') return 'pick';
   return node.kind; // prompt | asset | output | gen | motion
+}
+
+// Generator settings as agents see them: provider, model and one flat param map.
+function mcpTaskSettings(node) {
+  if (node.kind !== 'task') return {};
+  return {
+    provider: node.provider,
+    ...(node.model ? { model: node.model } : {}),
+    params: { ...(node.params || {}), ...(node.provider_params || {}) },
+  };
 }
 
 function mcpThumbOutputs(result) {
@@ -166,13 +123,14 @@ function mcpMakeId(graph, prefix) {
 }
 
 // Apply agent params onto a (copy of a) node. Shared by add_node/set_params.
+// Returns { node } or { error }.
 function mcpApplyParams(node, params) {
   const p = params || {};
-  const n = { ...node };
+  let n = { ...node };
   if (typeof p.title === 'string' && p.title) n.title = p.title;
   if (typeof p.prompt === 'string') {
     // Works for prompt nodes (read via dep.from.prompt) AND generator nodes
-    // (first_prompt in pixverse.rs checks node.prompt first).
+    // (first_prompt in providers/inputs.rs checks node.prompt first).
     n.prompt = p.prompt;
     if (n.kind === 'prompt') {
       n.footer = { ...(n.footer || {}), left: p.prompt.slice(0, 24) || 'edit me' };
@@ -194,37 +152,20 @@ function mcpApplyParams(node, params) {
   if (n.kind === 'select' && Number.isFinite(p.selected_index)) {
     n.selectedIndex = p.selected_index;
   }
-  if (n.kind === 'cli' && n.cli) {
-    const args = [...(n.cli.args || [])];
-    const fields = (n.cli.fields || []).map(f => ({ ...f }));
-    for (const [key, flag] of Object.entries(MCP_CLI_FLAGS)) {
-      if (p[key] == null) continue;
-      const value = String(p[key]);
-      const i = args.indexOf(flag);
-      if (i >= 0 && i + 1 < args.length) {
-        args[i + 1] = value;
-      } else {
-        const j = args.indexOf('--json');
-        args.splice(j >= 0 ? j : args.length, 0, flag, value);
+  if (n.kind === 'task') {
+    if (n.provider_params?._raw_args) {
+      const settings = Object.keys(p).filter(k => !['title', 'prompt'].includes(k));
+      if (settings.length) {
+        return { error: `node "${n.id}" runs a hand-edited command; reset it in the Inspector before changing ${settings.join(', ')}` };
       }
-      const fieldKey = key === 'aspect_ratio' ? 'ratio' : key;
-      const field = fields.find(f => f.k === fieldKey);
-      if (field) field.v = value;
+    } else {
+      const applied = applyTaskParams(n, p);
+      if (applied.error) return { error: applied.error };
+      // Keep a title the agent set explicitly over the derived one.
+      n = { ...applied.node, ...(typeof p.title === 'string' && p.title ? { title: p.title } : {}) };
     }
-    for (const [key, flags] of Object.entries(MCP_CLI_TOGGLES)) {
-      if (typeof p[key] !== 'boolean') continue;
-      const [flag, opposite, emitOppositeWhenFalse] = flags;
-      let nextArgs = args.filter(a => a !== flag && (!opposite || a !== opposite));
-      const selected = p[key] ? flag : emitOppositeWhenFalse ? opposite : null;
-      if (selected) {
-        const j = nextArgs.indexOf('--json');
-        nextArgs.splice(j >= 0 ? j : nextArgs.length, 0, selected);
-      }
-      args.splice(0, args.length, ...nextArgs);
-    }
-    n.cli = { ...n.cli, args, fields };
   }
-  return n;
+  return { node: n };
 }
 
 // ─── Tool handlers ───────────────────────────────────────────────────────────
@@ -337,6 +278,7 @@ function mcpGetGraph(stateRef) {
         type: mcpNodeType(n),
         title: n.title,
         ...(n.prompt ? { prompt: n.prompt } : {}),
+        ...mcpTaskSettings(n),
         ...(n.kind === 'cli' && n.cli
           ? { command: [n.cli.cmd || n.cli.bin, ...(n.cli.args || [])].join(' ') }
           : {}),
@@ -357,17 +299,30 @@ function mcpGetGraph(stateRef) {
 }
 
 async function mcpAddNode(args, stateRef, dispatch) {
+  const capability = resolveCapability(args.type);
   const title = MCP_NODE_TYPES[args.type];
-  if (!title) {
-    return { error: `unknown node type "${args.type}" — valid: ${Object.keys(MCP_NODE_TYPES).join(', ')}` };
+  if (!capability && !title) {
+    return { error: `unknown node type "${args.type}" — valid: ${mcpValidTypes().join(', ')}` };
   }
-  const tpl = NODE_TEMPLATES.find(t => t.title === title);
-  if (!tpl) return { error: `palette template missing for "${args.type}"` };
   const proj = mcpActiveProject(stateRef.current);
   if (!proj) return { error: 'no active project' };
 
-  const fresh = mcpApplyParams(tpl.spawn(), args.params);
-  const id = mcpMakeId(proj.graph, tpl.kind.slice(0, 3));
+  let spawned;
+  if (capability) {
+    const provider = args.params?.provider;
+    if (provider && !providerCapability(provider, capability)) {
+      return { error: `provider "${provider}" does not support ${capability} — available: ${providersFor(capability).map(m => m.id).join(', ')}` };
+    }
+    spawned = spawnTaskNode(capability, provider);
+  } else {
+    const tpl = NODE_TEMPLATES.find(t => t.title === title);
+    if (!tpl) return { error: `palette template missing for "${args.type}"` };
+    spawned = tpl.spawn();
+  }
+  const applied = mcpApplyParams(spawned, args.params);
+  if (applied.error) return { error: applied.error };
+  const fresh = applied.node;
+  const id = mcpMakeId(proj.graph, nodeIdPrefix(fresh.kind));
   const count = proj.graph.nodes.length;
   const x = Number.isFinite(args.x) ? args.x : 80 + (count % 4) * 300;
   const y = Number.isFinite(args.y) ? args.y : 80 + Math.floor(count / 4) * 230;
@@ -380,8 +335,9 @@ async function mcpAddNode(args, stateRef, dispatch) {
   return {
     ok: true,
     node_id: id,
-    type: args.type,
+    type: capability || args.type,
     title: fresh.title,
+    ...mcpTaskSettings(fresh),
     inputs: (fresh.ports || []).filter(p => p.side === 'left').map(p => p.label || p.kind),
   };
 }
@@ -435,21 +391,21 @@ async function mcpConnectNodes(args, stateRef, dispatch) {
 async function mcpSetParams(args, stateRef, dispatch) {
   const found = await mcpFindNode(stateRef, args.node_id);
   if (found.error) return { error: found.error };
+  const applied = mcpApplyParams(found.node, args.params);
+  if (applied.error) return { error: applied.error };
   dispatch({ type: 'PATCH_GRAPH', fn: g => ({
     ...g,
-    nodes: g.nodes.map(n => (n.id === args.node_id ? mcpApplyParams(n, args.params) : n)),
+    nodes: g.nodes.map(n => (n.id === args.node_id ? { ...applied.node, x: n.x, y: n.y } : n)),
   })});
   await mcpFlush();
   const proj = mcpActiveProject(stateRef.current);
-  const node = nodeById(proj.graph, args.node_id) || found.node;
+  const node = nodeById(proj.graph, args.node_id) || applied.node;
   return {
     ok: true,
     node_id: node.id,
     title: node.title,
     ...(node.prompt ? { prompt: node.prompt } : {}),
-    ...(node.kind === 'cli' && node.cli
-      ? { command: [node.cli.cmd || node.cli.bin, ...(node.cli.args || [])].join(' ') }
-      : {}),
+    ...mcpTaskSettings(node),
   };
 }
 

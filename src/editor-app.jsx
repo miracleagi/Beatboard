@@ -177,7 +177,7 @@ function App() {
 
   const spawnTemplateAt = (tpl, x, y) => {
     const fresh = tpl.spawn();
-    const id = makeNodeId(project.graph, tpl.kind.slice(0, 3));
+    const id = makeNodeId(project.graph, nodeIdPrefix(tpl.kind));
 
     let overrides = {};
     if (fresh.kind === 'output') {
@@ -407,5 +407,16 @@ function App() {
   );
 }
 
+// The provider catalog defines generator nodes (palette, ports, Inspector) and
+// is needed before the initial state is built, so load it before mounting.
 const root = ReactDOM.createRoot(document.getElementById('app'));
-root.render(<App/>);
+loadProviderCatalog()
+  .then(() => root.render(<App/>))
+  .catch((e) => {
+    console.error('[Beatboard] provider catalog failed to load', e);
+    root.render(
+      <div style={{ padding: 24, fontFamily: 'monospace', color: '#e66' }}>
+        Beatboard could not load its provider catalog (src/providers/*.json): {String(e)}
+      </div>
+    );
+  });

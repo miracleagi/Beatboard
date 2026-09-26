@@ -62,6 +62,12 @@ impl Provider for PixVerseProvider {
             Ok(TaskOutput { thumbs, raw })
         })
     }
+
+    fn preview(&self, req: &TaskRequest) -> Result<Vec<String>, ProviderError> {
+        let mut argv = vec!["pixverse".to_string()];
+        argv.extend(args::build_args(req)?);
+        Ok(argv)
+    }
 }
 
 /// Run one `pixverse` invocation and collect its media into local files.

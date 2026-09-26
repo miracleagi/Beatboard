@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // Generates golden fixtures for the PixVerse task-node migration.
 //
-// Every PixVerse node Beatboard can create (palette templates, built-in
-// scenarios, legacy gen/motion nodes), plus edited and unmigratable variants,
-// is paired with several upstream-dependency shapes. For each case the fixture
-// stores the legacy node, its migrated task node, and the deps. The Rust test
+// Every legacy PixVerse node Beatboard could create (the pre-P1 palette
+// templates frozen in scripts/fixtures/, built-in scenarios, legacy gen/motion
+// nodes), plus edited and unmigratable variants, is paired with several
+// upstream-dependency shapes. For each case the fixture stores the legacy
+// node, its migrated task node, and the deps. The Rust test
 // src-tauri/src/providers/pixverse/golden.rs asserts both resolve to the same
-// PixVerse argv.
+// PixVerse argv. "spawn" cases pair each old template with the task node the
+// palette creates today, so new nodes behave exactly like the old ones.
 //
 //   node scripts/gen-pixverse-fixtures.mjs          # rewrite the fixture
 //   node scripts/gen-pixverse-fixtures.mjs --check  # fail if it is stale
@@ -25,19 +27,31 @@ context.window = context;
 for (const file of ['src/scenarios.jsx', 'src/state.jsx', 'src/task-model.jsx']) {
   vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context, { filename: file });
 }
-const { NODE_TEMPLATES, SCENARIOS, normalizeGraphPorts, migrateLegacyPixVerseNode, isLegacyPixVerseNode } = context;
+const readJson = file => JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
+context.setProviderCatalog({
+  capabilities: readJson('src/providers/capabilities.json'),
+  providers: [readJson('src/providers/pixverse.json')],
+});
+const { SCENARIOS, normalizeGraphPorts, migrateLegacyPixVerseNode, isLegacyPixVerseNode, spawnTaskNode } = context;
 const plain = value => JSON.parse(JSON.stringify(value));
+
+// normalizeGraphPorts migrates PixVerse nodes to task nodes; read the
+// scenarios in their legacy form by switching that step off.
+function normalizeLegacy(graph) {
+  const migrate = context.migrateLegacyPixVerseNode;
+  context.migrateLegacyPixVerseNode = node => node;
+  try { return normalizeGraphPorts(graph); } finally { context.migrateLegacyPixVerseNode = migrate; }
+}
 
 // ── Source nodes ─────────────────────────────────────────────────────────────
 const sources = [];
-NODE_TEMPLATES.forEach((template, i) => {
-  const node = { id: `tpl${i}`, x: 0, y: 0, ...template.spawn() };
-  if (!isLegacyPixVerseNode(node)) return;
-  sources.push({ name: `template:${template.title}`, node: normalizeGraphPorts({ nodes: [node], edges: [] }).nodes[0], pristine: true });
+const legacyTemplates = readJson('scripts/fixtures/legacy-pixverse-templates.json').templates;
+legacyTemplates.forEach(({ title, node }) => {
+  sources.push({ name: `template:${title}`, node, pristine: true });
 });
 const scenarioList = Array.isArray(SCENARIOS) ? SCENARIOS : Object.values(SCENARIOS);
 scenarioList.forEach(scenario => {
-  normalizeGraphPorts({ nodes: scenario.nodes, edges: scenario.edges }).nodes
+  normalizeLegacy({ nodes: scenario.nodes, edges: scenario.edges }).nodes
     .filter(isLegacyPixVerseNode)
     .forEach(node => sources.push({ name: `scenario:${scenario.id}:${node.id}`, node, pristine: true }));
 });
@@ -153,11 +167,28 @@ function depSets(node) {
   };
 }
 
+// Media a correct resolver must never pass on (rejected Pick candidates).
+function forbiddenFor(deps) {
+  return deps.filter(d => d.from?.kind === 'select')
+    .flatMap(d => d.result.thumbs.filter(t => !t.chosen).flatMap(t => [t.path, t.id]));
+}
+
 // ── Emit ─────────────────────────────────────────────────────────────────────
 const cases = [];
 for (const source of sources) {
   const legacy = plain(source.node);
   const task = plain(migrateLegacyPixVerseNode(legacy));
+  if (source.pristine && source.name.startsWith('template:')) {
+    // What the palette creates today for the same capability.
+    const spawned = plain({ ...spawnTaskNode(task.capability), id: legacy.id, x: 0, y: 0 });
+    const labels = ports => ports.map(p => `${p.side}:${p.kind}:${p.label || ''}`).join(',');
+    if (labels(spawned.ports) !== labels(legacy.ports)) {
+      throw new Error(`${source.name}: spawned ports ${labels(spawned.ports)} differ from legacy ${labels(legacy.ports)}`);
+    }
+    for (const [shape, deps] of Object.entries(depSets(legacy))) {
+      cases.push({ name: `spawn:${task.capability} / ${shape}`, exact: true, legacy_may_fail: false, legacy, task: spawned, deps: plain(deps), forbidden: forbiddenFor(deps) });
+    }
+  }
   const raw = !!task.provider_params?._raw_args;
   if (source.pristine && raw) throw new Error(`${source.name}: pristine template fell back to raw args`);
   if (source.raw && !raw) throw new Error(`${source.name}: expected raw-args fallback`);
@@ -171,9 +202,7 @@ for (const source of sources) {
       legacy,
       task,
       deps: plain(deps),
-      // Media a correct resolver must never pass on (rejected Pick candidates).
-      forbidden: deps.filter(d => d.from?.kind === 'select')
-        .flatMap(d => d.result.thumbs.filter(t => !t.chosen).flatMap(t => [t.path, t.id])),
+      forbidden: forbiddenFor(deps),
     });
   }
 }

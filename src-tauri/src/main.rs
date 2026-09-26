@@ -49,6 +49,12 @@ async fn run_node(
         .unwrap_or_else(|| Err("aborted".to_string()))
 }
 
+/// The command a task node would run, for the Inspector.
+#[tauri::command]
+fn preview_task(node: Value) -> Result<Vec<String>, String> {
+    providers::preview_task(&node)
+}
+
 /// Stop a running node. Kills the local PixVerse / ffmpeg process; a task
 /// already submitted to a cloud provider may still complete (and be billed)
 /// on the provider side.
@@ -279,6 +285,7 @@ fn main() {
             save_graph,
             run_node,
             cancel_run,
+            preview_task,
             copy_to_downloads,
             mcp::mcp_response,
             runtime::runtime_status,

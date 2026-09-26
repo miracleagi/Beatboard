@@ -298,7 +298,7 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 | 阶段 | 内容 | 用户可见变化 | 验收标准 |
 |---|---|---|---|
 | **P0 重构（✅ 已完成，见第 13 节）** | `providers/` 骨架、`Provider` trait；把 PixVerse 实现迁到 trait 之后；`inputs.rs` 和 `media.rs` 抽离；`kind:'task'` 与迁移函数；取消机制（`cancel_run`） | Stop 真正能中止任务；除此之外没有其他变化 | 黄金测试全部通过；现有 6 个 Rust 测试通过；3 个内置场景手动跑通 |
-| **P1 声明驱动（约 1 周）** | manifest 与 `list_providers`；`<TaskInspector>` 取代各 PV Inspector；MCP 增加别名、`describe_capabilities` 和动态 schema；Config 面板改为 Providers 列表；删除 `config.apiKeys` 等遗留字段 | 调色板按能力分组；Inspector 统一样式 | `editor-panels.jsx` 净减少约 600 行以上；MCP 旧客户端调用全部兼容（加回归测试） |
+| **P1 声明驱动（✅ 已完成，见第 14 节）** | manifest 与 `list_providers`；`<TaskInspector>` 取代各 PV Inspector；MCP 增加别名、`describe_capabilities` 和动态 schema；Config 面板改为 Providers 列表；删除 `config.apiKeys` 等遗留字段 | 调色板按能力分组；Inspector 统一样式 | `editor-panels.jsx` 净减少约 600 行以上；MCP 旧客户端调用全部兼容（加回归测试） |
 | **P2 第二个供应商（约 1–1.5 周）** | Keychain 密钥存储；`jobs.rs`；fal 供应商（先做 `image.generate` 和 `video.generate`，再扩展）；本地文件上传；跨供应商使用媒体时的 ref 与上传回退 | 同一张图里可以混用 PixVerse 和 fal 节点 | 端到端测试：fal 生图 → PixVerse 图生视频 → ffmpeg 拼接 |
 | **P3 跨供应商能力** | "一键对比"（把一个节点复制到 N 个供应商或模型，结果汇入 Pick）；运行前成本估算与预算上限；任务 job_id 持久化，重启后可恢复轮询；ComfyUI 本地供应商 | 对比、成本、恢复 | — |
 
@@ -338,9 +338,51 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 
 ### 与原方案的差异和已知限制
 
-1. **迁移函数还没有接到 `HYDRATE` 上。** Inspector 和 MCP 仍然直接编辑 `cli.args`，现在迁移会让节点无法编辑。等 P1 的 `<TaskInspector>` 完成后再启用自动迁移。P0 期间 Rust 端两条路径都支持，`kind:'task'` 节点已经可以运行。
+1. **迁移函数还没有接到 `HYDRATE` 上。** Inspector 和 MCP 仍然直接编辑 `cli.args`，现在迁移会让节点无法编辑。等 P1 的 `<TaskInspector>` 完成后再启用自动迁移。P0 期间 Rust 端两条路径都支持，`kind:'task'` 节点已经可以运行。（P1 已启用，见第 14 节。）
 2. **取消只作用于本地进程。** PixVerse CLI 1.2.10 只有 `task status` / `task wait`，没有取消任务的命令。点 Stop 会立即结束本地 CLI 进程和下载，UI 也不再等待；但已经提交到 PixVerse 云端的任务可能会继续执行并扣费。等 CLI 或 API 提供取消能力后再补上。
 3. **`RunCtx` 暂时不带 `CancelToken`。** 目前通过在路由层丢弃 future、配合 `kill_on_drop` 统一实现取消。HTTP 轮询型供应商（P2）加入时再把 token 传进 `RunCtx`。
 4. **`image` 子命令用 `--image` 还是 `--images`**，由节点上 `images` 槽位的端口数决定（只有 1 个端口时用 `--image`）。这样内置场景（单图端口）和调色板模板（双图端口）都能逐字节复现。
 5. **旧 gen/motion 节点在缺少提示词时的行为变了。** 旧代码会在本地直接报错，task 节点则交给 CLI 去报错。这个差异只出现在报错路径上。
 6. **~~Pick 节点下游拿到的不是用户选中的候选~~（已修复）**：Rust 端的输入解析（`inputs.rs` 中的 `dep_thumb_lists`，旧路径 `legacy.rs` 和 ffmpeg 共用这个函数）现在只把 Pick 节点里被选中的那一个候选传给下游。选择结果优先取本次运行的结果，因为运行过程中传给下游的节点数据是运行开始时的快照，其中的选择可能还停留在上一次。前端的 `state.jsx` 和 `tauri-bridge.js` 按同一规则处理。黄金测试新增了"重新运行后选择已变"的用例，并断言被放弃的候选不会出现在 argv 中。
+
+## 14. P1 实施记录
+
+### 交付内容
+
+| 模块 | 文件 |
+|---|---|
+| 能力注册表：端口、槽位、输出类型、旧类型别名 | `src/providers/capabilities.json` |
+| PixVerse 声明文件：模型、参数定义（控件类型、选项、默认值、分组）、新节点初始值、说明文字 | `src/providers/pixverse.json` |
+| Rust 端读取声明、校验参数、生成 `describe_capabilities` 的内容 | `src-tauri/src/providers/catalog.rs` |
+| 前端读取声明，以及新建节点、改参数、切换供应商/模型、处理 MCP 参数 | `src/task-model.jsx` |
+| 由声明驱动的 `TaskInspector`（替代 11 个按子命令写死的面板） | `src/editor-panels.jsx` |
+| 预览将要执行的命令（`preview_task` 命令） | `src-tauri/src/providers/mod.rs`、`main.rs` |
+| MCP：`describe_capabilities`；`add_node` 的类型列表由注册表生成；旧类型名和旧参数名继续可用；参数按声明校验 | `src-tauri/src/mcp.rs`、`src/mcp-bridge.jsx` |
+| 加载时自动迁移：`normalizeGraphPorts` 把旧 PixVerse 节点转成 task 节点；`HYDRATE` 清掉 `apiKeys` 等遗留配置 | `src/state.jsx` |
+| 调色板按能力分组（Image / Video / Audio / Effects） | `src/state.jsx`（`paletteTemplates`） |
+
+`editor-panels.jsx` 从 2869 行减到 1826 行（删 1277 行，加 234 行），超过"净减 600 行"的目标。
+
+### 测试
+
+- **Rust**：共 26 个测试。
+  - 黄金测试增加到 550 个用例，其中 110 个是"新建节点"用例：调色板现在新建的每种节点，与 P1 之前的模板生成的 argv 逐字节一致。旧模板已冻结在 `scripts/fixtures/legacy-pixverse-templates.json`。
+  - 所有迁移后的节点和新建节点都必须通过声明校验。
+  - `catalog.rs` 自带测试，检查声明与注册表是否一致、各能力的初始值是否合法，以及校验规则是否正确。
+- **端到端**：`scripts/e2e/ui-mcp-smoke.mjs`，共 20 项检查。在无头 Chromium 里加载一份 P1 之前的保存数据，Tauri 后端用桩代替，覆盖：
+  - 迁移结果和清理后的配置；
+  - 旧 MCP 调用：短类型名 `video`、旧参数名 `quality` / `duration`、按旧端口名连线；
+  - 参数校验报错；
+  - Inspector 编辑、"原样保留命令"的节点重置；
+  - 调色板新建节点；
+  - 页面没有脚本报错。
+
+### 与原方案的差异
+
+1. **没有做 `list_providers` 命令。** 两份 JSON 放在 `src/providers/`，前端启动时直接 fetch（dev 和 release 构建都会把 `src/` 复制进 web 根目录），Rust 端用 `include_str!` 编译进去，生成测试夹具的脚本也直接读取。这样三方读的是同一份文件，也省掉一次 IPC。应用在声明加载完成后才开始渲染。
+2. **校验只检查参数名和值的类型，不检查取值范围。** 旧项目和旧的 MCP 调用里可能有选项列表以外的值（例如手写的模型名或分辨率）。目前这些值会原样传给 CLI；Inspector 会把列表外的模型标成"(custom)"。
+3. **没有做"未登录 / 缺 key 时拦截运行"。** PixVerse 的状态仍由 Config 里的运行时面板显示。等 P2 有了需要 key 的供应商，再把状态接到节点上。
+4. **"原样保留命令"的节点不能在 Inspector 里改参数。** 这类节点（`_raw_args`）会显示原始命令，并提供"Reset to standard settings"按钮；MCP 修改它们的参数时会报错并说明原因。
+5. **内置示例项目（`scenarios.jsx`）仍是旧格式。** 它们在加载时被迁移，正好一直覆盖迁移路径。
+6. **旧的非 PixVerse `gen` / `motion` 原型节点不再有参数面板。** 它们只能走模拟执行，也从没出现在调色板里。
+

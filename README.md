@@ -51,20 +51,23 @@ Double-click **`Beatboard.app`**, or drag it from the DMG into your Applications
 | **Prompt** | Text prompt input |
 | **Asset** | Image / video / audio source — pick from local disk or the Library |
 
-### PixVerse generation nodes
-| Node | Description |
-|------|-------------|
-| **Image** | Text-to-image or image-to-image |
-| **Video** | Text-to-video or image-to-video |
-| **Transition** | Transition video between two images |
-| **Reference** | Generate from multiple image / video / audio references |
-| **Motion Control** | Drive motion with a reference video |
-| **Extend** | Extend an existing video |
-| **Upscale** | Upscale a video to higher resolution |
-| **Modify** | Modify a video with a prompt and reference images |
-| **Voice** | Generate standalone text-to-speech audio |
-| **Music** | Generate music with custom, automatic, or no lyrics |
-| **Template** | Run a PixVerse template/effect by template ID |
+### Generation nodes
+Each generator node picks a provider and a model in the Inspector; today every node type runs on PixVerse.
+The settings each one offers come from `src/providers/pixverse.json`.
+
+| Node | Type (MCP) | Description |
+|------|------------|-------------|
+| **Generate image** | `image.generate` | Text-to-image or image-to-image |
+| **Generate video** | `video.generate` | Text-to-video or image-to-video |
+| **Transition** | `video.transition` | Transition video across 2–3 keyframes |
+| **Reference to video** | `video.reference` | Generate from multiple image / video / audio references |
+| **Motion control** | `video.motion_control` | Drive motion with a reference video |
+| **Extend video** | `video.extend` | Extend an existing video |
+| **Upscale video** | `video.upscale` | Upscale a video to higher resolution |
+| **Modify video** | `video.modify` | Modify a video with a prompt and reference images |
+| **Voice (TTS)** | `audio.speech` | Generate standalone text-to-speech audio |
+| **Music** | `audio.music` | Generate music with custom, automatic, or no lyrics |
+| **Template / effect** | `provider.template` | Run a PixVerse template/effect by template ID |
 
 ### Utility nodes
 | Node | Description |
@@ -118,7 +121,7 @@ Then ask your agent something like *"storyboard a 30-second product teaser: gene
 animate each, stitch them together"* — the graph grows on the canvas in real time, and every
 agent edit is undoable with ⌘Z.
 
-**Tools exposed:** `list_projects` · `create_project` · `switch_project` · `delete_project` · `get_graph` · `add_node` · `connect_nodes` · `set_params` · `run_node` · `get_node_result`
+**Tools exposed:** `describe_capabilities` · `list_projects` · `create_project` · `switch_project` · `delete_project` · `get_graph` · `add_node` · `connect_nodes` · `set_params` · `run_node` · `get_node_result`
 
 - The server listens on `127.0.0.1:4923` (override with the `BEATBOARD_MCP_PORT` env var), only while Beatboard is running, and never accepts remote connections.
 - Generation nodes run through the PixVerse CLI managed privately by Beatboard and your PixVerse account — exactly as if you clicked Run.
@@ -141,6 +144,8 @@ dev.command                  ← Development mode launcher (requires Rust)
 src/                         ← Frontend source (JSX, no build step needed)
   shared.jsx                 ← Design tokens, icons, shared components
   state.jsx                  ← State management, node templates, Executor interface
+  task-model.jsx             ← Generator (task) nodes: provider catalog, params, legacy migration
+  providers/                 ← Capability registry + provider manifests (JSON, also read by Rust)
   editor.jsx                 ← Canvas: drag, connect, runner
   editor-node.jsx            ← Individual node component
   editor-panels.jsx          ← Top bar, left palette, right Inspector
@@ -152,7 +157,8 @@ src-tauri/                   ← Rust backend
   src/main.rs                ← Tauri invoke handlers
   src/mcp.rs                 ← MCP server (agents drive the canvas)
   src/runtime.rs             ← Bundled ffmpeg + Beatboard-managed PixVerse runtime
-  src/pixverse.rs            ← PixVerse CLI argument resolution & execution
+  src/providers/             ← Provider trait, input resolution, cancellation, catalog validation
+  src/providers/pixverse/    ← PixVerse provider: task → CLI argv, execution, legacy argv nodes
   src/ffmpeg.rs              ← ffmpeg node execution
   src/thumbs.rs              ← Result parsing & thumbnail download
   src/storage.rs             ← Project file persistence

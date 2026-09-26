@@ -3,26 +3,6 @@
 // content is normally read-only, so users can rewrite prompts and CLI
 // commands directly.
 
-// ── PixVerse node-body helpers (detection only; editing lives in inspector) ──
-function _pvCliArg(args, flag, fallback = '') {
-  const i = (args || []).indexOf(flag);
-  if (i < 0) return fallback;
-  const next = args[i + 1];
-  return next && !String(next).startsWith('--') ? next : fallback;
-}
-function _isPixVerseCli(node) {
-  if (node?.kind !== 'cli') return false;
-  const raw = String(node?.cli?.cmd || node?.cli?.bin || '').trim();
-  return raw.split(/\s+/)[0].split(/[\\/]/).pop() === 'pixverse';
-}
-function _pvMode(node) {
-  const sub = (node?.cli?.args || [])[1] || 'image';
-  if (sub === 'voice' || sub === 'music') return 'audio';
-  if (sub === 'image') return 'image';
-  if (sub === 'template') return 'asset';
-  return 'video';
-}
-
 function EditableText({ value, onChange, placeholder, style, mono, mult, minRows = 1, maxRows }) {
   if (mult) {
     const text = value || '';
@@ -680,121 +660,83 @@ function EditableBody({ t, node, runResult, runOverride, candidateThumbs, onPatc
       />
     );
   }
-  if (node.kind === 'cli') {
-    // PixVerse nodes: compact read-only summary card — all params live in the inspector
-    if (_isPixVerseCli(node)) {
-      const args = node.cli?.args || [];
-      const mode = _pvMode(node);
-      const sub = args[1] || 'image';
-      const defaultModel = sub === 'image' ? 'gpt-image-2.0'
-        : sub === 'modify' ? 'v5.5'
-        : sub === 'voice' ? 'speech-2.8-hd'
-        : sub === 'music' ? 'music-2.6'
-        : 'v6';
-      const model = _pvCliArg(args, '--model', defaultModel);
-      const quality = _pvCliArg(args, '--quality', mode === 'image' ? '1080p' : '720p');
-      const ratio = _pvCliArg(args, '--aspect-ratio', '16:9');
-      const duration = mode === 'video' ? _pvCliArg(args, '--duration', '5') : null;
-      const count = _pvCliArg(args, '--count', '1');
-      const fields = mode === 'audio'
-        ? sub === 'music'
-          ? [
-              { k: 'model', v: model },
-              { k: 'duration', v: `${_pvCliArg(args, '--duration-seconds', '60')}s` },
-              { k: 'lyrics', v: args.includes('--instrumental') ? 'instrumental' : args.includes('--auto-lyrics') ? 'auto' : 'custom' },
-              { k: 'output', v: 'audio' },
-            ]
-          : [
-              { k: 'model', v: model },
-              { k: 'language', v: _pvCliArg(args, '--language', 'auto') },
-              { k: 'speed', v: `${_pvCliArg(args, '--speed', '1')}×` },
-              { k: 'output', v: 'audio' },
-            ]
-        : mode === 'asset'
-          ? [
-              { k: 'template', v: _pvCliArg(args, '--template-id', 'required') },
-              { k: 'quality', v: quality },
-              { k: 'ratio', v: ratio },
-              { k: 'count', v: `${count}×` },
-            ]
-          : [
-              { k: 'model', v: model },
-              { k: 'quality', v: quality },
-              { k: 'ratio', v: ratio },
-              duration != null ? { k: 'dur', v: `${duration}s` } : { k: 'count', v: `${count}×` },
-            ];
-      // model gets its own full-width row; quality / ratio / dur share the second row
-      const paramFields = fields.slice(1); // quality, ratio, dur/count
-      // Thumbnails from run result (prefer runOverride during live run)
-      const pvEffective = (runOverride?.thumbs?.length ? runOverride : null) ||
-                          (runResult?.thumbs?.length ? runResult : null);
-      const pvThumbs = pvEffective?.thumbs || [];
-      const pvCols = pvThumbs.length === 1 ? 1 : pvThumbs.length <= 4 ? 2 : Math.min(4, Math.ceil(Math.sqrt(pvThumbs.length)));
-      const pvThumbH = pvThumbs.length === 1 ? 80 : pvThumbs.length <= 4 ? 50 : 44;
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {/* Result thumbnails */}
-          {pvThumbs.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${pvCols}, 1fr)`, gap: 4 }}>
-              {pvThumbs.map((im, i) => (
-                <MediaThumb
-                  key={i}
-                  t={t}
-                  thumb={im}
-                  h={pvThumbH}
-                  selected={im.chosen}
-                  fallbackLabel={mode === 'video' ? 'video' : 'image'}
-                  previewable
-                  onClick={() => {
-                    const updated = pvThumbs.map((x, j) => ({ ...x, chosen: j === i }));
-                    onPatch({ thumbs: updated });
-                  }}
-                />
-              ))}
-            </div>
-          )}
-          {/* Command summary card */}
-          <div style={{ background: t.bg2, border: `1px solid ${t.border}`, borderRadius: 4, overflow: 'hidden' }}>
-            <div style={{
-              padding: '5px 9px',
-              background: t.panelHi,
-              borderBottom: `1px solid ${t.border}`,
-              fontFamily: FONT_MONO, fontSize: 10, color: t.amber,
-              display: 'flex', alignItems: 'center', gap: 5,
-            }}>
-              <Icon name="terminal" size={10}/>
-              <span>pixverse create {mode}</span>
-            </div>
-            {/* model — full width so long names never get clipped */}
-            <div style={{
-              padding: '4px 9px',
-              borderBottom: `1px solid ${t.border}`,
-              fontFamily: FONT_MONO, fontSize: 9.5,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>
-              <span style={{ color: t.textMute }}>model</span>
-              <span style={{ color: t.text, marginLeft: 5 }}>{model}</span>
-            </div>
-            {/* quality · ratio · dur/count — 3 columns */}
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${paramFields.length}, 1fr)` }}>
-              {paramFields.map((f, i) => (
-                <div key={i} style={{
-                  padding: '4px 9px',
-                  borderLeft: i > 0 ? `1px solid ${t.border}` : 'none',
-                  fontFamily: FONT_MONO, fontSize: 9.5,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  minWidth: 0,
-                }}>
-                  <span style={{ color: t.textMute }}>{f.k}</span>
-                  <span style={{ color: t.text, marginLeft: 5 }}>{f.v}</span>
-                </div>
-              ))}
-            </div>
+  if (node.kind === 'task') {
+    // Generator nodes: compact read-only summary — all params live in the inspector
+    const mode = taskOutputKind(node);
+    const model = modelLabel(node.provider, node.model);
+    const paramFields = taskSummaryFields(node);
+    // Thumbnails from run result (prefer runOverride during live run)
+    const effective = (runOverride?.thumbs?.length ? runOverride : null) ||
+                        (runResult?.thumbs?.length ? runResult : null);
+    const thumbs = effective?.thumbs || [];
+    const cols = thumbs.length === 1 ? 1 : thumbs.length <= 4 ? 2 : Math.min(4, Math.ceil(Math.sqrt(thumbs.length)));
+    const thumbH = thumbs.length === 1 ? 80 : thumbs.length <= 4 ? 50 : 44;
+    // The top offset keeps the summary clear of the input-port labels, which
+    // are drawn at fixed heights along the node's left edge.
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 20 }}>
+        {/* Result thumbnails */}
+        {thumbs.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 4 }}>
+            {thumbs.map((im, i) => (
+              <MediaThumb
+                key={i}
+                t={t}
+                thumb={im}
+                h={thumbH}
+                selected={im.chosen}
+                fallbackLabel={mode === 'video' ? 'video' : mode === 'audio' ? 'audio' : 'image'}
+                previewable
+                onClick={() => {
+                  const updated = thumbs.map((x, j) => ({ ...x, chosen: j === i }));
+                  onPatch({ thumbs: updated });
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {/* Settings summary */}
+        <div style={{ background: t.bg2, border: `1px solid ${t.border}`, borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{
+            padding: '5px 9px',
+            background: t.panelHi,
+            borderBottom: `1px solid ${t.border}`,
+            fontFamily: FONT_MONO, fontSize: 10, color: t.amber,
+            display: 'flex', alignItems: 'center', gap: 5,
+          }}>
+            <Icon name="terminal" size={10}/>
+            <span>{node.provider} · {node.capability}</span>
+          </div>
+          {/* model — full width so long names never get clipped */}
+          <div style={{
+            padding: '4px 9px',
+            borderBottom: `1px solid ${t.border}`,
+            fontFamily: FONT_MONO, fontSize: 9.5,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            <span style={{ color: t.textMute }}>model</span>
+            <span style={{ color: t.text, marginLeft: 5 }}>{model || '—'}</span>
+          </div>
+          {/* quality · ratio · dur/count — 3 columns */}
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${paramFields.length}, 1fr)` }}>
+            {paramFields.map((f, i) => (
+              <div key={i} style={{
+                padding: '4px 9px',
+                borderLeft: i > 0 ? `1px solid ${t.border}` : 'none',
+                fontFamily: FONT_MONO, fontSize: 9.5,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}>
+                <span style={{ color: t.textMute }}>{f.k}</span>
+                <span style={{ color: t.text, marginLeft: 5 }}>{f.v}</span>
+              </div>
+            ))}
           </div>
         </div>
-      );
-    }
-
+      </div>
+    );
+  }
+  if (node.kind === 'cli') {
     // Non-PixVerse CLI: editable terminal inline
     const cli = node.cli || { cmd: '', args: [] };
     return (

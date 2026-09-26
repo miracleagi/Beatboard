@@ -49,20 +49,23 @@ Beatboard 会自行管理所有运行依赖：ffmpeg 已内置，PixVerse CLI �
 | **Prompt** | 文本提示词输入 |
 | **Asset** | 图片 / 视频 / 音频素材（支持从本地磁盘选择，或从 Library 中选取） |
 
-### PixVerse 生成节点
-| 节点 | 说明 |
-|------|------|
-| **Image** | 文生图 / 图生图 |
-| **Video** | 文生视频 / 图生视频 |
-| **Transition** | 两张图之间的过渡视频 |
-| **Reference** | 多图 / 多视频 / 多音频参考生成 |
-| **Motion Control** | 用参考视频控制运动轨迹 |
-| **Extend** | 延长已有视频 |
-| **Upscale** | 视频超分辨率 |
-| **Modify** | 用提示词和参考图修改已有视频 |
-| **Voice** | 生成独立的文字转语音音频 |
-| **Music** | 生成纯音乐、自动歌词或自定义歌词音乐 |
-| **Template** | 按模板 ID 运行 PixVerse 模板 / 特效 |
+### 生成节点
+每个生成节点都在 Inspector 中选择供应商和模型；目前所有节点类型都由 PixVerse 执行。
+各节点可用的参数来自 `src/providers/pixverse.json`。
+
+| 节点 | 类型（MCP） | 说明 |
+|------|------------|------|
+| **Generate image** | `image.generate` | 文生图 / 图生图 |
+| **Generate video** | `video.generate` | 文生视频 / 图生视频 |
+| **Transition** | `video.transition` | 沿 2–3 个关键帧生成过渡视频 |
+| **Reference to video** | `video.reference` | 多图 / 多视频 / 多音频参考生成 |
+| **Motion control** | `video.motion_control` | 用参考视频控制运动轨迹 |
+| **Extend video** | `video.extend` | 延长已有视频 |
+| **Upscale video** | `video.upscale` | 视频超分辨率 |
+| **Modify video** | `video.modify` | 用提示词和参考图修改已有视频 |
+| **Voice (TTS)** | `audio.speech` | 生成独立的文字转语音音频 |
+| **Music** | `audio.music` | 生成纯音乐、自动歌词或自定义歌词音乐 |
+| **Template / effect** | `provider.template` | 按模板 ID 运行 PixVerse 模板 / 特效 |
 
 ### 工具节点
 | 节点 | 说明 |
@@ -115,7 +118,7 @@ claude mcp add --transport http beatboard http://127.0.0.1:4923/mcp
 然后对 agent 说类似 *"做一个 30 秒产品预告片的分镜:生成 4 张静帧,逐张转成动画,最后拼接成片"*——
 节点图会实时出现在画布上,agent 的每一步操作都可以用 ⌘Z 撤销。
 
-**暴露的工具:** `list_projects` · `create_project` · `switch_project` · `delete_project` · `get_graph` · `add_node` · `connect_nodes` · `set_params` · `run_node` · `get_node_result`
+**暴露的工具:** `describe_capabilities` · `list_projects` · `create_project` · `switch_project` · `delete_project` · `get_graph` · `add_node` · `connect_nodes` · `set_params` · `run_node` · `get_node_result`
 
 - Server 监听 `127.0.0.1:4923`(可用环境变量 `BEATBOARD_MCP_PORT` 修改),仅在 Beatboard 运行期间存在,不接受远程连接
 - 生成节点通过 Beatboard 私有管理的 PixVerse CLI 和你的 PixVerse 账号执行，和手动点 Run 完全一致
@@ -138,6 +141,8 @@ dev.command                  ← 开发模式启动（需要 Rust 环境）
 src/                         ← 前端源码（JSX，不需要编译步骤）
   shared.jsx                 ← 设计 token、图标、通用组件
   state.jsx                  ← 状态管理、节点模板、Executor 接口
+  task-model.jsx             ← 生成（task）节点：供应商目录、参数、旧节点迁移
+  providers/                 ← 能力注册表 + 供应商声明（JSON，Rust 端也读取）
   editor.jsx                 ← 画布：拖拽、连线、运行器
   editor-node.jsx            ← 单个节点组件
   editor-panels.jsx          ← 顶栏、左侧面板、右侧 Inspector
@@ -149,7 +154,8 @@ src-tauri/                   ← Rust 后端
   src/main.rs                ← Tauri invoke 处理器
   src/mcp.rs                 ← MCP server(agent 驱动画布)
   src/runtime.rs             ← 内置 ffmpeg + Beatboard 私有 PixVerse 运行时管理
-  src/pixverse.rs            ← PixVerse CLI 参数解析与执行
+  src/providers/             ← Provider 接口、输入解析、取消、目录校验
+  src/providers/pixverse/    ← PixVerse 供应商：task → CLI 参数、执行、旧格式节点
   src/ffmpeg.rs              ← ffmpeg 节点执行
   src/thumbs.rs              ← 运行结果解析与缩略图下载
   src/storage.rs             ← 项目文件持久化
