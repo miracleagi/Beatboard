@@ -2,7 +2,7 @@
 
 mod ffmpeg;
 mod mcp;
-mod pixverse;
+mod providers;
 mod runtime;
 mod storage;
 mod thumbs;
@@ -26,11 +26,35 @@ async fn run_node(
     config: Value,
     run_id: String,
 ) -> Result<Value, String> {
-    match cli_bin_name(&node).as_str() {
-        "pixverse" => pixverse::run_pixverse(app, window, node, deps, config, run_id).await,
-        "ffmpeg" => ffmpeg::run_ffmpeg(app, window, node, deps, config, run_id).await,
-        other => Err(format!("Unsupported command: {other}")),
-    }
+    let (cancel, _guard) = providers::cancel::register(&run_id);
+    let ctx = providers::RunCtx {
+        app: app.clone(),
+        window: window.clone(),
+        config: config.clone(),
+        run_id: run_id.clone(),
+    };
+    let run = async move {
+        if node.get("kind").and_then(|v| v.as_str()) == Some("task") {
+            return providers::run_task(node, deps, ctx).await;
+        }
+        match cli_bin_name(&node).as_str() {
+            "pixverse" => providers::pixverse::run_legacy(node, deps, ctx).await,
+            "ffmpeg" => ffmpeg::run_ffmpeg(app, window, node, deps, config, run_id).await,
+            other => Err(format!("Unsupported command: {other}")),
+        }
+    };
+    // Dropping `run` on cancel kills its child processes (kill_on_drop).
+    providers::cancel::until_cancelled(run, cancel)
+        .await
+        .unwrap_or_else(|| Err("aborted".to_string()))
+}
+
+/// Stop a running node. Kills the local PixVerse / ffmpeg process; a task
+/// already submitted to a cloud provider may still complete (and be billed)
+/// on the provider side.
+#[tauri::command]
+fn cancel_run(run_id: String) -> bool {
+    providers::cancel::cancel(&run_id)
 }
 
 /// Extract the bare binary name from a node (handles both provider nodes and CLI nodes).
@@ -254,6 +278,7 @@ fn main() {
             load_graph,
             save_graph,
             run_node,
+            cancel_run,
             copy_to_downloads,
             mcp::mcp_response,
             runtime::runtime_status,

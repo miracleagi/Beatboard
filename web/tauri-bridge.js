@@ -168,7 +168,7 @@
   }
 
   function shouldUseTauri(node) {
-    return isPixVerseNode(node) || isFfmpegNode(node);
+    return node?.kind === 'task' || isPixVerseNode(node) || isFfmpegNode(node);
   }
 
   function estimateMs(node) {
@@ -341,6 +341,14 @@
         if (!isAborted(ctx)) onProgress(Number(event.payload) || 0);
       });
 
+      // Stop: the runner only flips an abort flag, so watch it and ask Rust
+      // to kill the node's process instead of letting it run to completion.
+      const abortWatch = setInterval(() => {
+        if (!isAborted(ctx)) return;
+        clearInterval(abortWatch);
+        invoke('cancel_run', { runId }).catch(e => console.warn('[Beatboard] cancel failed', e));
+      }, 150);
+
       try {
         onProgress(0);
         const result = await invoke('run_node', {
@@ -356,6 +364,7 @@
         if (isAborted(ctx)) return { ok: false, error: 'aborted' };
         return { ok: false, error: String(e) };
       } finally {
+        clearInterval(abortWatch);
         unlisten();
       }
     },

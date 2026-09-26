@@ -11,7 +11,7 @@ Beatboard 目前把 PixVerse CLI 当作唯一的生成后端，而且这种耦�
 
 1. 新增一个供应商时，只需要实现一个 Rust 模块并写一份声明（manifest），不改前端，也不改 MCP 代码。
 2. Inspector 表单、MCP 工具的 schema、参数校验都来自同一份声明，只维护一处。
-3. 现有项目（`.beatboard.json`）自动迁移。迁移后 PixVerse 节点生成的 argv 必须与迁移前**逐字节一致**。
+3. 现有项目（`.beatboard.json`）自动迁移。未改动过的模板节点，迁移后生成的 argv 必须与迁移前**逐字节一致**；用户改过参数的节点允许 flag 顺序不同（PixVerse CLI 不关心顺序），但 flag 和取值必须完全相同。
 4. 顺手补上两处现有缺陷：Stop 无法中止生成任务；API key 明文写在项目状态里。
 
 **非目标**
@@ -297,7 +297,7 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 
 | 阶段 | 内容 | 用户可见变化 | 验收标准 |
 |---|---|---|---|
-| **P0 重构（约 1–1.5 周）** | `providers/` 骨架、`Provider` trait；把 PixVerse 实现迁到 trait 之后；`inputs.rs` 和 `media.rs` 抽离；`kind:'task'` 与迁移函数；取消机制（`cancel_run`） | Stop 真正能中止任务；除此之外没有其他变化 | 黄金测试全部通过；现有 6 个 Rust 测试通过；3 个内置场景手动跑通 |
+| **P0 重构（✅ 已完成，见第 13 节）** | `providers/` 骨架、`Provider` trait；把 PixVerse 实现迁到 trait 之后；`inputs.rs` 和 `media.rs` 抽离；`kind:'task'` 与迁移函数；取消机制（`cancel_run`） | Stop 真正能中止任务；除此之外没有其他变化 | 黄金测试全部通过；现有 6 个 Rust 测试通过；3 个内置场景手动跑通 |
 | **P1 声明驱动（约 1 周）** | manifest 与 `list_providers`；`<TaskInspector>` 取代各 PV Inspector；MCP 增加别名、`describe_capabilities` 和动态 schema；Config 面板改为 Providers 列表；删除 `config.apiKeys` 等遗留字段 | 调色板按能力分组；Inspector 统一样式 | `editor-panels.jsx` 净减少约 600 行以上；MCP 旧客户端调用全部兼容（加回归测试） |
 | **P2 第二个供应商（约 1–1.5 周）** | Keychain 密钥存储；`jobs.rs`；fal 供应商（先做 `image.generate` 和 `video.generate`，再扩展）；本地文件上传；跨供应商使用媒体时的 ref 与上传回退 | 同一张图里可以混用 PixVerse 和 fal 节点 | 端到端测试：fal 生图 → PixVerse 图生视频 → ffmpeg 拼接 |
 | **P3 跨供应商能力** | "一键对比"（把一个节点复制到 N 个供应商或模型，结果汇入 Pick）；运行前成本估算与预算上限；任务 job_id 持久化，重启后可恢复轮询；ComfyUI 本地供应商 | 对比、成本、恢复 | — |
@@ -312,3 +312,35 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 4. **迁移风险**：旧项目中用户手工改过的 argv 可能无法完全反解。`_raw_args` 兜底方案 + 黄金测试可以覆盖这类情况；另外保留旧路径一个版本周期，发现问题时可以回退。
 5. **成本透明**：接入多家付费 API 后，用户可能在不知情的情况下产生费用。P2 至少要在节点上显示"按次计费"的提示，P3 再做估算和预算。
 6. **许可证**：仓库使用 MIT Non-Commercial 许可证，与各供应商的 ToS 本身不冲突，但接入前要确认 fal、Replicate 等是否允许在第三方桌面客户端中使用用户自己的 key。实现时核对。
+
+## 13. P0 实施记录
+
+### 交付内容
+
+| 模块 | 文件 |
+|---|---|
+| Provider trait、`TaskRequest`、`run_task` 路由 | `src-tauri/src/providers/mod.rs` |
+| 与供应商无关的输入解析（按槽位分组的 `MediaRef`，云端 ID 按供应商命名空间区分） | `src-tauri/src/providers/inputs.rs` |
+| 按 run 取消（`cancel_run` 命令，`until_cancelled`） | `src-tauri/src/providers/cancel.rs`、`main.rs`、`runtime.rs`（`kill_on_drop`）、`web/tauri-bridge.js` |
+| PixVerse 供应商：TaskRequest → argv；执行与输出下载 | `src-tauri/src/providers/pixverse/{mod,args}.rs` |
+| 旧的占位符解析（`kind:'cli'` 节点，以及 `_raw_args` 兜底） | `src-tauri/src/providers/pixverse/legacy.rs`（原 `pixverse.rs`） |
+| 前端迁移函数：`cli` / `gen` / `motion` 转为 `task` 节点 | `src/task-model.jsx` |
+| 黄金测试 | `scripts/gen-pixverse-fixtures.mjs` → `src-tauri/tests/fixtures/pixverse_task_migration.json` → `src-tauri/src/providers/pixverse/golden.rs` |
+
+### 黄金测试
+
+- 测试覆盖：
+  - 44 个源节点：全部调色板模板、全部内置场景中的 PixVerse 节点、每个模板改参数后的版本、4 个会走兜底的模板，以及 4 个旧的 gen/motion 节点。
+  - 每个源节点配 9 种上游依赖形态，共 396 个用例：全连、只连第一个、不连、只连文本、只连媒体、不带云端 ID、只有节点缓存、经过 Pick 节点、边的顺序颠倒。
+- 判定标准：未改动的模板和走 `_raw_args` 兜底的节点要求**逐字节一致**；改过参数的节点按 flag 分组后比较，与顺序无关。
+- 验证了测试确实能发现问题：人为注入三类错误（调整参数顺序、忽略云端 ID、丢掉 `--no-audio`），分别有 88、36、54 个用例失败。
+- 修改 `task-model.jsx` 或模板后，运行 `node scripts/gen-pixverse-fixtures.mjs` 重新生成夹具；加 `--check` 参数可以检查夹具是否过期。
+
+### 与原方案的差异和已知限制
+
+1. **迁移函数还没有接到 `HYDRATE` 上。** Inspector 和 MCP 仍然直接编辑 `cli.args`，现在迁移会让节点无法编辑。等 P1 的 `<TaskInspector>` 完成后再启用自动迁移。P0 期间 Rust 端两条路径都支持，`kind:'task'` 节点已经可以运行。
+2. **取消只作用于本地进程。** PixVerse CLI 1.2.10 只有 `task status` / `task wait`，没有取消任务的命令。点 Stop 会立即结束本地 CLI 进程和下载，UI 也不再等待；但已经提交到 PixVerse 云端的任务可能会继续执行并扣费。等 CLI 或 API 提供取消能力后再补上。
+3. **`RunCtx` 暂时不带 `CancelToken`。** 目前通过在路由层丢弃 future、配合 `kill_on_drop` 统一实现取消。HTTP 轮询型供应商（P2）加入时再把 token 传进 `RunCtx`。
+4. **`image` 子命令用 `--image` 还是 `--images`**，由节点上 `images` 槽位的端口数决定（只有 1 个端口时用 `--image`）。这样内置场景（单图端口）和调色板模板（双图端口）都能逐字节复现。
+5. **旧 gen/motion 节点在缺少提示词时的行为变了。** 旧代码会在本地直接报错，task 节点则交给 CLI 去报错。这个差异只出现在报错路径上。
+6. **保留了现有的一个行为（可能是缺陷）**：Pick 节点下游取的是 `result.thumbs` 中第一个匹配类型的缩略图，而不是用户选中的那一个。P0 按原样保留，已作为独立问题另行跟踪。

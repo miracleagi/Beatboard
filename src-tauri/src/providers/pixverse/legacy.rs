@@ -1,49 +1,12 @@
-// PixVerse CLI execution: argument resolution and subprocess management.
+// Legacy PixVerse argv resolution for `kind: "cli"` nodes: substitutes
+// `{prompt}`, `{images}`, `{video_id}`, … placeholders in a raw argv template.
+// Task nodes that could not be migrated to typed params keep their template in
+// `provider_params._raw_args` and are resolved here too.
 
-use crate::runtime::resolve_pixverse;
-use crate::storage::runs_dir;
-use crate::thumbs::{collect_thumbs, infer_media_kind, parse_json_output, resolve_asset_thumbs};
-use crate::utils::percent_decode;
+use crate::providers::inputs::{first_prompt, thumb_matches_kind, thumb_path};
 use serde_json::Value;
-use std::process::Stdio;
-use tauri::{AppHandle, Window};
 
-// ─── Prompt / image extraction ───────────────────────────────────────────────
-
-/// Find the text prompt for a node: checks the node's own `prompt` field first,
-/// then looks at connected prompt-kind dep nodes. Motion nodes append `motionPrompt`.
-pub fn first_prompt(node: &Value, deps: &[Value]) -> String {
-    if let Some(p) = node.get("prompt").and_then(|v| v.as_str()) {
-        if !p.is_empty() {
-            return p.to_string();
-        }
-    }
-    let connected: Option<String> = deps.iter().find_map(|dep| {
-        let from = dep.get("from")?;
-        if from.get("kind")?.as_str()? != "prompt" {
-            return None;
-        }
-        let p = from.get("prompt")?.as_str()?;
-        if p.is_empty() {
-            None
-        } else {
-            Some(p.to_string())
-        }
-    });
-
-    let motion_prompt = node
-        .get("motionPrompt")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
-    match (connected, motion_prompt) {
-        (Some(p), Some(m)) => format!("{p}\nMotion: {m}"),
-        (Some(p), None) => p,
-        (None, Some(m)) => m,
-        (None, None) => String::new(),
-    }
-}
+// ─── Media extraction ────────────────────────────────────────────────────────
 
 /// Return the first image URL or path from any upstream dep's thumbs.
 pub fn first_image_input(deps: &[Value]) -> String {
@@ -51,64 +14,6 @@ pub fn first_image_input(deps: &[Value]) -> String {
         .into_iter()
         .next()
         .unwrap_or_default()
-}
-
-/// Extract a single media path from a thumb object (shared helper).
-fn thumb_path(thumb: &Value) -> String {
-    if let Some(p) = thumb
-        .get("path")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        return p.to_string();
-    }
-    if let Some(p) = thumb
-        .get("local_path")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        return p.to_string();
-    }
-    if let Some(p) = thumb
-        .get("localPath")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        return p.to_string();
-    }
-    if let Some(u) = thumb
-        .get("url")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        if u.starts_with("atlasmedia://localhost") {
-            return percent_decode(u.trim_start_matches("atlasmedia://localhost"));
-        }
-        if u.starts_with("asset://localhost") {
-            return percent_decode(u.trim_start_matches("asset://localhost"));
-        }
-        return u.to_string();
-    }
-    String::new()
-}
-
-fn thumb_matches_kind(thumb: &Value, kind: &str) -> bool {
-    if thumb.get("type").and_then(|v| v.as_str()) == Some(kind) {
-        return true;
-    }
-    let path = thumb_path(thumb).to_lowercase();
-    match kind {
-        "image" => [".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]
-            .iter()
-            .any(|ext| path.split('?').next().unwrap_or(&path).ends_with(ext)),
-        "video" => [".mp4", ".mov", ".webm", ".m4v"]
-            .iter()
-            .any(|ext| path.split('?').next().unwrap_or(&path).ends_with(ext)),
-        "audio" => [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"]
-            .iter()
-            .any(|ext| path.split('?').next().unwrap_or(&path).ends_with(ext)),
-        _ => false,
-    }
 }
 
 /// Return all media paths from deps whose thumbs have the given type,
@@ -438,73 +343,6 @@ fn build_provider_args(node: &Value, deps: &[Value]) -> Result<Vec<String>, Stri
     }
     args.push("--json".to_string());
     Ok(args)
-}
-
-// ─── Runner ──────────────────────────────────────────────────────────────────
-
-pub async fn run_pixverse(
-    app: AppHandle,
-    window: Window,
-    node: Value,
-    deps: Vec<Value>,
-    config: Value,
-    run_id: String,
-) -> Result<Value, String> {
-    let runtime = resolve_pixverse(&app, &config);
-
-    let args = resolve_pixverse_args(&node, &deps)?;
-    let subcommand = args.get(1).map(String::as_str).unwrap_or("image");
-    let default_mode = match subcommand {
-        "voice" | "music" => "audio",
-        "image" => "image",
-        _ => "video",
-    };
-
-    let _ = window.emit(&format!("progress:{run_id}"), 0.05f64);
-
-    let output = runtime
-        .command(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            format!("Failed to start PixVerse: {e}. Install the managed runtime from Beatboard Config.")
-        })?
-        .wait_with_output()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let _ = window.emit(&format!("progress:{run_id}"), 0.9f64);
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        return Err(if !stderr.is_empty() { stderr } else { stdout });
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let parsed = parse_json_output(&stdout);
-    // Templates can produce either an image or a video. Prefer the actual
-    // response metadata/URL extension so Beatboard downloads and labels it using
-    // the matching PixVerse asset type.
-    let mode = if subcommand == "template" {
-        infer_media_kind(parsed.as_ref()).unwrap_or(default_mode)
-    } else {
-        default_mode
-    };
-    let raw_thumbs = collect_thumbs(parsed.as_ref(), mode);
-
-    let pv_dir = runs_dir(&app)?.join("pixverse");
-    std::fs::create_dir_all(&pv_dir).ok();
-    let thumbs = resolve_asset_thumbs(&runtime, raw_thumbs, mode, &pv_dir).await;
-
-    let _ = window.emit(&format!("progress:{run_id}"), 1.0f64);
-
-    Ok(serde_json::json!({
-        "ok": true,
-        "pixverse": parsed,
-        "thumbs": thumbs,
-    }))
 }
 
 #[cfg(test)]

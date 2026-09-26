@@ -56,7 +56,9 @@ impl RuntimeCommand {
             .env("PATH", npm_augmented_path())
             .envs(self.env.iter().cloned())
             .args(&self.prefix_args)
-            .args(args);
+            .args(args)
+            // A cancelled run drops its future; take the child down with it.
+            .kill_on_drop(true);
         command
     }
 
