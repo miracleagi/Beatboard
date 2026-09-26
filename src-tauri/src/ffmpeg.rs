@@ -1,5 +1,6 @@
 // ffmpeg execution: collect video inputs, localize remote URLs, build concat filter, run.
 
+use crate::providers::inputs::dep_thumb_lists;
 use crate::runtime::resolve_ffmpeg;
 use crate::storage::runs_dir;
 use crate::utils::{expand_tilde, percent_decode};
@@ -24,27 +25,33 @@ fn collect_video_inputs(deps: &[Value]) -> Vec<String> {
 
     let mut values: Vec<String> = Vec::new();
     for dep in deps {
-        for thumbs_ptr in [
-            dep.get("result").and_then(|r| r.get("thumbs")),
-            dep.get("from").and_then(|f| f.get("thumbs")),
-        ] {
-            if let Some(arr) = thumbs_ptr.and_then(|t| t.as_array()) {
-                for thumb in arr {
-                    let is_vid = thumb.get("type").and_then(|t| t.as_str()) == Some("video");
-                    // Pick ONE value per thumb: prefer local path, then url, then aliases.
-                    // This avoids double-counting a thumb that has both path and url set.
-                    let value = ["path", "url", "video_url", "videoUrl"]
-                        .iter()
-                        .find_map(|&key| {
-                            thumb
-                                .get(key)
-                                .and_then(|v| v.as_str())
-                                .filter(|s| !s.is_empty() && (is_vid || is_video_ext(s)))
-                        });
-                    if let Some(s) = value {
-                        values.push(s.to_string());
-                    }
+        // A Pick contributes only its chosen clip — from the run result when
+        // present, never also a possibly stale choice cached on the node.
+        let is_pick = dep
+            .get("from")
+            .and_then(|f| f.get("kind"))
+            .and_then(|k| k.as_str())
+            == Some("select");
+        for thumbs in dep_thumb_lists(dep) {
+            let before = values.len();
+            for thumb in thumbs {
+                let is_vid = thumb.get("type").and_then(|t| t.as_str()) == Some("video");
+                // Pick ONE value per thumb: prefer local path, then url, then aliases.
+                // This avoids double-counting a thumb that has both path and url set.
+                let value = ["path", "url", "video_url", "videoUrl"]
+                    .iter()
+                    .find_map(|&key| {
+                        thumb
+                            .get(key)
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty() && (is_vid || is_video_ext(s)))
+                    });
+                if let Some(s) = value {
+                    values.push(s.to_string());
                 }
+            }
+            if is_pick && values.len() > before {
+                break;
             }
         }
     }
@@ -329,4 +336,36 @@ pub async fn run_ffmpeg(
             "sources": raw_inputs,
         }]
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_video_inputs;
+    use serde_json::json;
+
+    fn clips(prefix: &str, chosen: usize) -> serde_json::Value {
+        json!([0, 1, 2].map(|i| json!({
+            "type": "video", "path": format!("/{prefix}-{i}.mp4"), "chosen": i == chosen
+        })))
+    }
+
+    #[test]
+    fn pick_contributes_only_its_chosen_clip() {
+        let deps = vec![
+            json!({ "from": { "kind": "select", "selectedIndex": 0, "thumbs": clips("a", 0) },
+                    "result": { "selectedIndex": 2, "thumbs": clips("a", 2) } }),
+            json!({ "from": { "kind": "select" }, "result": { "selectedIndex": 1, "thumbs": clips("b", 1) } }),
+        ];
+        assert_eq!(collect_video_inputs(&deps), ["/a-2.mp4", "/b-1.mp4"]);
+    }
+
+    #[test]
+    fn other_deps_still_contribute_every_clip() {
+        let deps =
+            vec![json!({ "from": { "kind": "cli" }, "result": { "thumbs": clips("g", 0) } })];
+        assert_eq!(
+            collect_video_inputs(&deps),
+            ["/g-0.mp4", "/g-1.mp4", "/g-2.mp4"]
+        );
+    }
 }

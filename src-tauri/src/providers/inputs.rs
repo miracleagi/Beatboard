@@ -101,15 +101,45 @@ pub fn dep_port(dep: &Value) -> u64 {
         .unwrap_or(999)
 }
 
+/// Index of the candidate a Pick produced: its explicit `selectedIndex`, else
+/// the thumb flagged `chosen`, else the first.
+fn picked_index(holder: Option<&Value>, thumbs: &[Value]) -> usize {
+    holder
+        .and_then(|h| h.get("selectedIndex"))
+        .and_then(|i| i.as_u64())
+        .and_then(|i| usize::try_from(i).ok())
+        .filter(|&i| i < thumbs.len())
+        .or_else(|| {
+            thumbs
+                .iter()
+                .position(|t| t.get("chosen").and_then(|c| c.as_bool()) == Some(true))
+        })
+        .unwrap_or(0)
+}
+
 /// Thumb lists of a dep in lookup order: run result first, then node cache.
-pub fn dep_thumb_lists(dep: &Value) -> impl Iterator<Item = &Vec<Value>> {
-    [
-        dep.get("result").and_then(|r| r.get("thumbs")),
-        dep.get("from").and_then(|f| f.get("thumbs")),
-    ]
-    .into_iter()
-    .flatten()
-    .filter_map(|t| t.as_array())
+///
+/// A Pick (`select`) node forwards every candidate with the user's choice
+/// marked, so each of its lists is narrowed to the chosen thumb. The run result
+/// is authoritative: during a run, `from` is the graph as it was when the run
+/// started and may still carry the previous run's selection.
+pub fn dep_thumb_lists(dep: &Value) -> Vec<&[Value]> {
+    let is_pick = dep
+        .get("from")
+        .and_then(|f| f.get("kind"))
+        .and_then(|k| k.as_str())
+        == Some("select");
+    [dep.get("result"), dep.get("from")]
+        .into_iter()
+        .filter_map(|holder| {
+            let thumbs = holder?.get("thumbs")?.as_array()?.as_slice();
+            if !is_pick || thumbs.is_empty() {
+                return Some(thumbs);
+            }
+            let i = picked_index(holder, thumbs);
+            Some(&thumbs[i..=i])
+        })
+        .collect()
 }
 
 /// Cloud ids carried by a thumb, keyed by provider. Thumbs written before
@@ -138,6 +168,7 @@ fn thumb_cloud_ids(thumb: &Value) -> BTreeMap<String, String> {
 ///   a path or an id — the first such thumb carrying ids wins.
 pub fn dep_media_ref(dep: &Value, kind: &str) -> Option<MediaRef> {
     let path = dep_thumb_lists(dep)
+        .into_iter()
         .find_map(|thumbs| {
             thumbs
                 .iter()
@@ -148,6 +179,7 @@ pub fn dep_media_ref(dep: &Value, kind: &str) -> Option<MediaRef> {
         .unwrap_or_default();
 
     let cloud_ids = dep_thumb_lists(dep)
+        .into_iter()
         .find_map(|thumbs| {
             let matching: Vec<&Value> = thumbs
                 .iter()
@@ -252,7 +284,7 @@ pub fn task_request(node: &Value, deps: &[Value]) -> Result<TaskRequest, Provide
 
 #[cfg(test)]
 mod tests {
-    use super::task_request;
+    use super::{dep_media_ref, task_request};
     use serde_json::json;
 
     #[test]
@@ -310,5 +342,53 @@ mod tests {
     #[test]
     fn missing_capability_is_invalid() {
         assert!(task_request(&json!({ "kind": "task" }), &[]).is_err());
+    }
+
+    fn candidates(chosen: usize) -> serde_json::Value {
+        json!([0, 1, 2].map(|i| json!({
+            "type": "image", "path": format!("/cand-{i}.png"), "id": format!("pv-{i}"), "chosen": i == chosen
+        })))
+    }
+
+    fn picked_path(dep: serde_json::Value) -> String {
+        dep_media_ref(&dep, "image").unwrap().path
+    }
+
+    #[test]
+    fn pick_forwards_the_chosen_candidate() {
+        let dep = json!({ "from": { "kind": "select" },
+            "result": { "selectedIndex": 2, "thumbs": candidates(2) } });
+        assert_eq!(picked_path(dep.clone()), "/cand-2.png");
+        let media = dep_media_ref(&dep, "image").unwrap();
+        assert_eq!(media.cloud_ids["pixverse"], "pv-2");
+    }
+
+    #[test]
+    fn pick_run_result_beats_stale_node_selection() {
+        // Mid-run, `from` is the graph from before this run's pick.
+        let dep = json!({
+            "from": { "kind": "select", "selectedIndex": 0, "thumbs": candidates(0) },
+            "result": { "selectedIndex": 1, "thumbs": candidates(1) }
+        });
+        assert_eq!(picked_path(dep), "/cand-1.png");
+    }
+
+    #[test]
+    fn pick_falls_back_to_node_then_chosen_flag() {
+        let cached =
+            json!({ "from": { "kind": "select", "selectedIndex": 1, "thumbs": candidates(0) } });
+        assert_eq!(picked_path(cached), "/cand-1.png");
+        let flagged =
+            json!({ "from": { "kind": "select" }, "result": { "thumbs": candidates(2) } });
+        assert_eq!(picked_path(flagged), "/cand-2.png");
+        let out_of_range = json!({ "from": { "kind": "select" },
+            "result": { "selectedIndex": 9, "thumbs": candidates(1) } });
+        assert_eq!(picked_path(out_of_range), "/cand-1.png");
+    }
+
+    #[test]
+    fn non_pick_deps_keep_first_match() {
+        let dep = json!({ "from": { "kind": "cli" }, "result": { "thumbs": candidates(2) } });
+        assert_eq!(picked_path(dep), "/cand-0.png");
     }
 }

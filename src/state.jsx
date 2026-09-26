@@ -345,7 +345,6 @@ function resultThumbs(result) {
 }
 
 function sourceThumbs(dep) {
-  if (dep.from?.kind === 'select' && Array.isArray(dep.from?.thumbs) && dep.from.thumbs.length) return dep.from.thumbs;
   const thumbs = resultThumbs(dep.result);
   return thumbs.length ? thumbs : (Array.isArray(dep.from?.thumbs) ? dep.from.thumbs : []);
 }
@@ -362,22 +361,33 @@ function sourceOutputIndex(dep) {
   return found;
 }
 
-function chosenThumb(thumbs, selectedIndex) {
-  const idx = Number.isFinite(selectedIndex) ? selectedIndex : thumbs.findIndex(t => t.chosen);
-  return thumbs[Math.max(0, idx)] || thumbs[0];
+// The candidate a Pick produced: its explicit selectedIndex, else the thumb
+// flagged `chosen`, else the first. Reads the run result before the node:
+// mid-run, dep.from is the graph as it was when the run started and may still
+// carry the previous run's selection. Mirrors picked_index in
+// src-tauri/src/providers/inputs.rs.
+function pickedThumb(dep) {
+  const fromResult = resultThumbs(dep.result);
+  const holder = fromResult.length ? dep.result : dep.from;
+  const thumbs = fromResult.length ? fromResult : (Array.isArray(dep.from?.thumbs) ? dep.from.thumbs : []);
+  if (!thumbs.length) return null;
+  const selected = holder?.selectedIndex;
+  const idx = Number.isInteger(selected) && selected >= 0 && selected < thumbs.length
+    ? selected
+    : thumbs.findIndex(t => t.chosen);
+  return thumbs[Math.max(0, idx)];
 }
 
 function upstreamThumbs(deps, options = {}) {
   const out = [];
   (deps || []).forEach(dep => {
-    const thumbs = sourceThumbs(dep);
-    if (!thumbs.length) return;
     if (dep.from?.kind === 'select') {
-      const selectedIndex = dep.from.selectedIndex ?? dep.result?.selectedIndex;
-      const picked = chosenThumb(thumbs, selectedIndex);
+      const picked = pickedThumb(dep);
       if (picked) out.push({ ...picked, chosen: true });
       return;
     }
+    const thumbs = sourceThumbs(dep);
+    if (!thumbs.length) return;
     if (options.forSelect && (dep.from?.kind === 'gen' || dep.from?.kind === 'motion' || dep.from?.kind === 'cli')) {
       out.push(...thumbs.map((thumb, i) => ({ ...thumb, sourceIndex: i })));
       return;

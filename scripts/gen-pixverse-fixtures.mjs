@@ -117,10 +117,16 @@ function depFor(nodeId, portIndex, port, n, shape) {
   }
   if (!['image', 'video', 'audio'].includes(port.kind)) return null;
   const thumb = mediaThumb(port.kind, n, { id: shape !== 'no-ids' });
-  if (shape === 'pick') {
+  if (shape === 'pick' || shape === 'pick-stale') {
     // A Pick node forwards every candidate with `chosen` marking the choice.
+    // The rejected candidate is numbered n+100 so tests can assert it never
+    // reaches the argv. 'pick-stale' mimics a re-run: the runner's graph
+    // snapshot still holds the previous choice, the run result the new one.
     const candidates = [mediaThumb(port.kind, n + 100), thumb].map((t, i) => ({ ...t, chosen: i === 1 }));
-    return { edge, from: { id: `src${n}`, kind: 'select', selectedIndex: 1, thumbs: candidates }, result: { selectedIndex: 1, thumbs: candidates, state: 'done' } };
+    const from = shape === 'pick-stale'
+      ? { id: `src${n}`, kind: 'select', selectedIndex: 0, thumbs: candidates.map((t, i) => ({ ...t, chosen: i === 0 })) }
+      : { id: `src${n}`, kind: 'select', selectedIndex: 1, thumbs: candidates };
+    return { edge, from, result: { selectedIndex: 1, thumbs: candidates, state: 'done' } };
   }
   if (shape === 'cached') {
     return { edge, from: { id: `src${n}`, kind: 'asset', thumbs: [thumb] }, result: undefined };
@@ -142,6 +148,7 @@ function depSets(node) {
     'no-ids': build(left, 'no-ids'),
     cached: build(left, 'cached'),
     pick: build(left, 'pick'),
+    'pick-stale': build(left, 'pick-stale'),
     reversed: build(left, 'result').reverse(),
   };
 }
@@ -164,6 +171,9 @@ for (const source of sources) {
       legacy,
       task,
       deps: plain(deps),
+      // Media a correct resolver must never pass on (rejected Pick candidates).
+      forbidden: deps.filter(d => d.from?.kind === 'select')
+        .flatMap(d => d.result.thumbs.filter(t => !t.chosen).flatMap(t => [t.path, t.id])),
     });
   }
 }

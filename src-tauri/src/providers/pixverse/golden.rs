@@ -1,7 +1,8 @@
 // Golden test: legacy PixVerse nodes and their migrated task nodes must resolve
-// to the same CLI argv. Fixtures come from scripts/gen-pixverse-fixtures.mjs,
-// which runs the frontend migration (src/task-model.jsx) over every PixVerse
-// node Beatboard can create.
+// to the same CLI argv, and neither may pass on a candidate a Pick rejected.
+// Fixtures come from scripts/gen-pixverse-fixtures.mjs, which runs the
+// frontend migration (src/task-model.jsx) over every PixVerse node Beatboard
+// can create.
 
 use super::{args, legacy, PixVerseProvider, RESOLVED_ARGS};
 use crate::providers::Provider;
@@ -64,6 +65,16 @@ fn migrated_task_nodes_reproduce_legacy_argv() {
             }
         };
         compared += 1;
+        for forbidden in case["forbidden"].as_array().into_iter().flatten() {
+            let forbidden = forbidden.as_str().unwrap_or_default();
+            for (which, argv) in [("legacy", &legacy_argv), ("task", &task_argv)] {
+                if argv.iter().any(|a| a == forbidden) {
+                    failures.push(format!(
+                        "{name}: {which} argv passes on rejected Pick candidate {forbidden}"
+                    ));
+                }
+            }
+        }
         let same = if case["exact"] == true {
             legacy_argv == task_argv
         } else {

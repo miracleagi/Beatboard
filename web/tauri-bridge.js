@@ -195,22 +195,34 @@
   }
 
   function sourceThumbs(dep) {
-    if (dep.from?.kind === 'select' && Array.isArray(dep.from?.thumbs) && dep.from.thumbs.length) return dep.from.thumbs;
     const thumbs = resultThumbs(dep.result);
     return thumbs.length ? thumbs : (Array.isArray(dep.from?.thumbs) ? dep.from.thumbs : []);
+  }
+
+  // Same rule as pickedThumb in src/state.jsx: run result before the (possibly
+  // stale) node, explicit selectedIndex before the `chosen` flag.
+  function pickedThumb(dep) {
+    const fromResult = resultThumbs(dep.result);
+    const holder = fromResult.length ? dep.result : dep.from;
+    const thumbs = fromResult.length ? fromResult : (Array.isArray(dep.from?.thumbs) ? dep.from.thumbs : []);
+    if (!thumbs.length) return null;
+    const selected = holder?.selectedIndex;
+    const idx = Number.isInteger(selected) && selected >= 0 && selected < thumbs.length
+      ? selected
+      : thumbs.findIndex(t => t.chosen);
+    return thumbs[Math.max(0, idx)];
   }
 
   function upstreamThumbs(deps) {
     const out = [];
     for (const dep of deps || []) {
-      const thumbs = sourceThumbs(dep);
-      if (!thumbs.length) continue;
       if (dep.from?.kind === 'select') {
-        const idx = dep.from.selectedIndex ?? dep.result?.selectedIndex;
-        const picked = Number.isFinite(idx) ? thumbs[idx] : thumbs.find(t => t.chosen);
+        const picked = pickedThumb(dep);
         if (picked) out.push({ ...picked, chosen: true });
         continue;
       }
+      const thumbs = sourceThumbs(dep);
+      if (!thumbs.length) continue;
       const chosen = thumbs.find(t => t.chosen) || thumbs[0];
       if (chosen) out.push(chosen);
     }

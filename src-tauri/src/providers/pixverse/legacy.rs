@@ -3,7 +3,7 @@
 // Task nodes that could not be migrated to typed params keep their template in
 // `provider_params._raw_args` and are resolved here too.
 
-use crate::providers::inputs::{first_prompt, thumb_matches_kind, thumb_path};
+use crate::providers::inputs::{dep_thumb_lists, first_prompt, thumb_matches_kind, thumb_path};
 use serde_json::Value;
 
 // ─── Media extraction ────────────────────────────────────────────────────────
@@ -27,25 +27,20 @@ fn all_inputs_of_type(deps: &[Value], kind: &str) -> Vec<String> {
             .and_then(|t| t.get("port"))
             .and_then(|p| p.as_u64())
             .unwrap_or(999);
-        for thumbs_ptr in [
-            dep.get("result").and_then(|r| r.get("thumbs")),
-            dep.get("from").and_then(|f| f.get("thumbs")),
-        ] {
-            if let Some(thumbs) = thumbs_ptr.and_then(|t| t.as_array()) {
-                let mut found = false;
-                for thumb in thumbs {
-                    if thumb_matches_kind(thumb, kind) {
-                        let p = thumb_path(thumb);
-                        if !p.is_empty() {
-                            entries.push((port_idx, p));
-                            found = true;
-                            break;
-                        }
+        for thumbs in dep_thumb_lists(dep) {
+            let mut found = false;
+            for thumb in thumbs {
+                if thumb_matches_kind(thumb, kind) {
+                    let p = thumb_path(thumb);
+                    if !p.is_empty() {
+                        entries.push((port_idx, p));
+                        found = true;
+                        break;
                     }
                 }
-                if found {
-                    break;
-                }
+            }
+            if found {
+                break;
             }
         }
     }
@@ -75,33 +70,28 @@ fn first_video_id(deps: &[Value]) -> String {
     });
     for dep in ordered {
         // Prefer result thumbs over node thumbs (result is from the actual run)
-        for thumbs_ptr in [
-            dep.get("result").and_then(|r| r.get("thumbs")),
-            dep.get("from").and_then(|f| f.get("thumbs")),
-        ] {
-            if let Some(thumbs) = thumbs_ptr.and_then(|t| t.as_array()) {
-                for thumb in thumbs {
-                    if !thumb_matches_kind(thumb, "video") {
-                        continue;
-                    }
-                    // Prefer the cloud ID field
-                    if let Some(id) = thumb
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty())
-                    {
-                        return id.to_string();
-                    }
+        for thumbs in dep_thumb_lists(dep) {
+            for thumb in thumbs {
+                if !thumb_matches_kind(thumb, "video") {
+                    continue;
                 }
-                // No cloud ID found in this dep; fall back to local path
-                for thumb in thumbs {
-                    if !thumb_matches_kind(thumb, "video") {
-                        continue;
-                    }
-                    let p = thumb_path(thumb);
-                    if !p.is_empty() {
-                        return p;
-                    }
+                // Prefer the cloud ID field
+                if let Some(id) = thumb
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    return id.to_string();
+                }
+            }
+            // No cloud ID found in this dep; fall back to local path
+            for thumb in thumbs {
+                if !thumb_matches_kind(thumb, "video") {
+                    continue;
+                }
+                let p = thumb_path(thumb);
+                if !p.is_empty() {
+                    return p;
                 }
             }
         }
@@ -120,25 +110,20 @@ fn sorted_media_inputs(deps: &[Value]) -> Vec<String> {
             .and_then(|t| t.get("port"))
             .and_then(|p| p.as_u64())
             .unwrap_or(999);
-        for thumbs_ptr in [
-            dep.get("result").and_then(|r| r.get("thumbs")),
-            dep.get("from").and_then(|f| f.get("thumbs")),
-        ] {
-            if let Some(thumbs) = thumbs_ptr.and_then(|t| t.as_array()) {
-                for thumb in thumbs {
-                    let p = thumb_path(thumb);
-                    if !p.is_empty() {
-                        entries.push((port_idx, p));
-                        break;
-                    }
+        for thumbs in dep_thumb_lists(dep) {
+            for thumb in thumbs {
+                let p = thumb_path(thumb);
+                if !p.is_empty() {
+                    entries.push((port_idx, p));
+                    break;
                 }
-                if entries
-                    .last()
-                    .map(|(pi, _)| *pi == port_idx)
-                    .unwrap_or(false)
-                {
-                    break; // one path per dep
-                }
+            }
+            if entries
+                .last()
+                .map(|(pi, _)| *pi == port_idx)
+                .unwrap_or(false)
+            {
+                break; // one path per dep
             }
         }
     }
@@ -425,5 +410,23 @@ mod tests {
         });
         let args = resolve_pixverse_args(&node, &[prompt_dep(0, "Hello from Beatboard")]).unwrap();
         assert_eq!(value_after(&args, "--text"), "Hello from Beatboard");
+    }
+
+    #[test]
+    fn video_from_pick_uses_chosen_candidate() {
+        let node = json!({
+            "kind": "cli",
+            "cli": { "args": ["create", "video", "--prompt", "{prompt}", "--image", "{image}", "--json"] }
+        });
+        let pick = json!({
+            "edge": { "to": { "port": 0 } },
+            "from": { "kind": "select", "selectedIndex": 0 },
+            "result": { "selectedIndex": 1, "thumbs": [
+                { "type": "image", "path": "/first.png", "chosen": false },
+                { "type": "image", "path": "/second.png", "chosen": true }
+            ] }
+        });
+        let args = resolve_pixverse_args(&node, &[pick, prompt_dep(1, "go")]).unwrap();
+        assert_eq!(value_after(&args, "--image"), "/second.png");
     }
 }

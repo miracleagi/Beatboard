@@ -343,4 +343,4 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 3. **`RunCtx` 暂时不带 `CancelToken`。** 目前通过在路由层丢弃 future、配合 `kill_on_drop` 统一实现取消。HTTP 轮询型供应商（P2）加入时再把 token 传进 `RunCtx`。
 4. **`image` 子命令用 `--image` 还是 `--images`**，由节点上 `images` 槽位的端口数决定（只有 1 个端口时用 `--image`）。这样内置场景（单图端口）和调色板模板（双图端口）都能逐字节复现。
 5. **旧 gen/motion 节点在缺少提示词时的行为变了。** 旧代码会在本地直接报错，task 节点则交给 CLI 去报错。这个差异只出现在报错路径上。
-6. **保留了现有的一个行为（可能是缺陷）**：Pick 节点下游取的是 `result.thumbs` 中第一个匹配类型的缩略图，而不是用户选中的那一个。P0 按原样保留，已作为独立问题另行跟踪。
+6. **~~Pick 节点下游拿到的不是用户选中的候选~~（已修复）**：Rust 端的输入解析（`inputs.rs` 中的 `dep_thumb_lists`，旧路径 `legacy.rs` 和 ffmpeg 共用这个函数）现在只把 Pick 节点里被选中的那一个候选传给下游。选择结果优先取本次运行的结果，因为运行过程中传给下游的节点数据是运行开始时的快照，其中的选择可能还停留在上一次。前端的 `state.jsx` 和 `tauri-bridge.js` 按同一规则处理。黄金测试新增了"重新运行后选择已变"的用例，并断言被放弃的候选不会出现在 argv 中。
