@@ -11,9 +11,12 @@ use tauri::{AppHandle, Window};
 
 // ─── Input collection ────────────────────────────────────────────────────────
 
-/// Gather all video URLs/paths from upstream dep thumbs, deduped in order.
-/// For each thumb we take at most ONE value: local `path` is preferred over
-/// remote `url` so we don't emit two entries for the same video.
+/// Gather one video URL/path per upstream dep, deduped in order.
+///
+/// Each connection contributes a single clip: the first video of a generator
+/// that produced several variants (`count > 1`), or the clip chosen in a Pick
+/// (whose thumb lists `dep_thumb_lists` already narrows to the choice). Per
+/// thumb, a local `path` is preferred over a remote `url`.
 fn collect_video_inputs(deps: &[Value]) -> Vec<String> {
     let is_video_ext = |s: &str| {
         let low = s.split('?').next().unwrap_or(s).to_lowercase();
@@ -22,39 +25,27 @@ fn collect_video_inputs(deps: &[Value]) -> Vec<String> {
             || low.ends_with(".webm")
             || low.ends_with(".m4v")
     };
+    let video_value = |thumb: &Value| -> Option<String> {
+        let is_vid = thumb.get("type").and_then(|t| t.as_str()) == Some("video");
+        ["path", "url", "video_url", "videoUrl"]
+            .iter()
+            .find_map(|&key| {
+                thumb
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty() && (is_vid || is_video_ext(s)))
+                    .map(String::from)
+            })
+    };
 
-    let mut values: Vec<String> = Vec::new();
-    for dep in deps {
-        // A Pick contributes only its chosen clip — from the run result when
-        // present, never also a possibly stale choice cached on the node.
-        let is_pick = dep
-            .get("from")
-            .and_then(|f| f.get("kind"))
-            .and_then(|k| k.as_str())
-            == Some("select");
-        for thumbs in dep_thumb_lists(dep) {
-            let before = values.len();
-            for thumb in thumbs {
-                let is_vid = thumb.get("type").and_then(|t| t.as_str()) == Some("video");
-                // Pick ONE value per thumb: prefer local path, then url, then aliases.
-                // This avoids double-counting a thumb that has both path and url set.
-                let value = ["path", "url", "video_url", "videoUrl"]
-                    .iter()
-                    .find_map(|&key| {
-                        thumb
-                            .get(key)
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty() && (is_vid || is_video_ext(s)))
-                    });
-                if let Some(s) = value {
-                    values.push(s.to_string());
-                }
-            }
-            if is_pick && values.len() > before {
-                break;
-            }
-        }
-    }
+    let values: Vec<String> = deps
+        .iter()
+        .filter_map(|dep| {
+            dep_thumb_lists(dep)
+                .into_iter()
+                .find_map(|thumbs| thumbs.iter().find_map(video_value))
+        })
+        .collect();
 
     // Deduplicate while preserving order
     let mut seen = std::collections::HashSet::new();
@@ -360,12 +351,24 @@ mod tests {
     }
 
     #[test]
-    fn other_deps_still_contribute_every_clip() {
-        let deps =
-            vec![json!({ "from": { "kind": "cli" }, "result": { "thumbs": clips("g", 0) } })];
-        assert_eq!(
-            collect_video_inputs(&deps),
-            ["/g-0.mp4", "/g-1.mp4", "/g-2.mp4"]
-        );
+    fn multi_variant_generator_contributes_its_first_clip() {
+        let deps = vec![
+            json!({ "from": { "kind": "task" }, "result": { "thumbs": clips("g", 0) } }),
+            json!({ "from": { "kind": "task" }, "result": { "thumbs": clips("h", 0) } }),
+        ];
+        assert_eq!(collect_video_inputs(&deps), ["/g-0.mp4", "/h-0.mp4"]);
+    }
+
+    #[test]
+    fn first_video_skips_non_video_thumbs_and_falls_back_to_node_cache() {
+        let deps = vec![
+            json!({ "from": { "kind": "task" }, "result": { "thumbs": [
+                { "type": "image", "path": "/still.png" },
+                { "type": "video", "path": "/clip.mp4" },
+                { "type": "video", "path": "/clip-2.mp4" }
+            ] } }),
+            json!({ "from": { "kind": "asset", "thumbs": [{ "path": "/cached.mov" }] } }),
+        ];
+        assert_eq!(collect_video_inputs(&deps), ["/clip.mp4", "/cached.mov"]);
     }
 }
