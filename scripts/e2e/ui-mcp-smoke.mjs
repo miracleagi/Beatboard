@@ -41,6 +41,8 @@ window.__TAURI__ = {
       if (cmd === 'runtime_status') return { pixverse: { available: true, source: 'managed', version: '1.2.10' }, ffmpeg: { available: true, source: 'bundled', version: '8.1' } };
       if (cmd === 'preview_task') return ['pixverse', 'create', args.node.capability, '--json'];
       if (cmd === 'mcp_response') { window.__mcp[args.id] = args.result; return null; }
+      if (cmd === 'run_node') return window.__runNode(args);
+      if (cmd === 'resume_task') return { ok: true, provider: args.node.provider, thumbs: [{ type: 'image', path: '/tmp/resumed.png', url: '/tmp/resumed.png', chosen: true }] };
       if (cmd === 'provider_secret_status') return !!window.__keys[args.provider];
       if (cmd === 'set_provider_secret') { window.__keys[args.provider] = args.secret; return null; }
       if (cmd === 'clear_provider_secret') { delete window.__keys[args.provider]; return null; }
@@ -51,6 +53,23 @@ window.__TAURI__ = {
     listen: async (name, fn) => { (window.__listeners[name] = window.__listeners[name] || []).push(fn); return () => {}; },
   },
   dialog: {},
+};
+// Fake generation: PixVerse succeeds and reports credits; fal emits its job
+// first, then Veo fails and other fal models succeed.
+window.__runs = [];
+window.__runNode = async ({ node, runId }) => {
+  window.__runs.push(node.id);
+  await new Promise(r => setTimeout(r, 50));
+  if (node.kind !== 'task') return { ok: true };
+  const kind = node.capability.startsWith('video') ? 'video' : 'image';
+  const thumb = { type: kind, path: '/tmp/' + node.id + (kind === 'video' ? '.mp4' : '.png'), url: '/tmp/' + node.id, chosen: true };
+  if (node.provider === 'fal') {
+    (window.__listeners['job:' + runId] || []).forEach(fn => fn({ payload: { request_id: 'req-' + node.id, status_url: 's', response_url: 'r', cancel_url: 'c', output: kind === 'video' ? 'video' : 'images', model: node.model } }));
+    await new Promise(r => setTimeout(r, 50));
+    if (node.model === 'veo-3.1-fast') throw new Error('fal.ai error (HTTP 422): prompt: flagged by safety checker');
+    return { ok: true, provider: 'fal', thumbs: [thumb] };
+  }
+  return { ok: true, provider: 'pixverse', thumbs: [thumb], cost: { amount: 30, unit: 'PixVerse credits' } };
 };
 let mcpId = 0;
 window.__mcpCall = async (tool, args) => {
@@ -82,12 +101,21 @@ const legacyState = {
   activeProjectId: 'p_legacy',
   library: [],
   projects: [{
-    id: 'p_legacy', name: 'Legacy', color: '#7fc8ff', outputDir: '', modifiedAt: 1, runResults: {},
+    id: 'p_legacy', name: 'Legacy', color: '#7fc8ff', outputDir: '', modifiedAt: 1,
+    // Saved while a fal run was in flight (Beatboard quit), plus a node that
+    // was only queued — it should simply be forgotten.
+    runResults: {
+      f1: { state: 'running', progress: 0.4, job: { request_id: 'req-abc12345', status_url: 's', response_url: 'r', cancel_url: 'c', output: 'images', model: 'flux-dev' } },
+      p0: { state: 'queued', progress: 0 },
+    },
     graph: {
       nodes: [
         { id: 'p0', kind: 'prompt', title: 'Prompt', x: 40, y: 130, w: 196, prompt: 'a harbor at dawn', ports: [{ kind: 'text', side: 'right', top: 52 }], footer: { left: 'x', right: '·' } },
         { ...withFlags(video, ['--seed', '42', '--off-peak']), id: 'v1', x: 400, y: 100 },
         { ...withFlags(image, ['--frobnicate', 'x']), id: 'r1', x: 400, y: 320 },
+        { id: 'f1', kind: 'task', capability: 'image.generate', provider: 'fal', model: 'flux-dev', title: 'Interrupted fal image',
+          params: { aspect_ratio: '16:9', count: 1 }, provider_params: {}, w: 244, x: 1000, y: 600,
+          ports: [{ kind: 'image', side: 'left', top: 44, label: 'img 1', slot: 'images' }, { kind: 'image', side: 'left', top: 68, label: 'img 2', slot: 'images' }, { kind: 'text', side: 'left', top: 92, label: 'prompt', slot: 'prompt' }, { kind: 'image', side: 'right', top: 68 }] },
       ],
       edges: [{ from: { node: 'p0', port: 0 }, to: { node: 'v1', port: 1 } }],
     },
@@ -123,6 +151,17 @@ const check = (name, ok, detail) => { results[name] = ok ? 'PASS' : `FAIL ${JSON
 const shot = async (name) => {
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `${name}.png`) });
 };
+// Select a canvas node the way a click does (mousedown + mouseup without
+// moving), without depending on which node happens to be on top.
+const selectNode = async (id) => {
+  await page.evaluate((nodeId) => {
+    // The draggable header (cursor: grab) owns the node's mousedown handler.
+    const el = document.querySelector(`[data-node-id="${nodeId}"] div[style*="cursor: grab"]`);
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 0, clientY: 0 }));
+    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  }, id);
+  await page.waitForTimeout(300);
+};
 const mcp = (tool, args = {}) => page.evaluate(([t, a]) => window.__mcpCall(t, a), [tool, args]);
 // Click an element with exactly this text inside the right-hand Inspector.
 const inspectorClick = async (text) => {
@@ -143,8 +182,8 @@ check('unconvertible node kept raw', r1?.type === 'image.generate' && !!r1.param
 check('edge preserved', g.edges.some(e => e.from === 'p0' && e.to === 'v1' && e.to_port === 'prompt'), g.edges);
 await page.waitForTimeout(1500);
 const saved = await page.evaluate(() => window.__saved.at(-1));
-check('saved config cleaned', saved && JSON.stringify(saved.config) === JSON.stringify({ binPaths: { ffmpeg: '', pixverse: '/opt/pv' } }), saved?.config);
-check('saved nodes are task nodes', saved && saved.projects[0].graph.nodes.filter(n => n.kind === 'task').length === 2 && !JSON.stringify(saved).includes('sk-secret'), null);
+check('saved config cleaned', saved && JSON.stringify(saved.config) === JSON.stringify({ binPaths: { ffmpeg: '', pixverse: '/opt/pv' }, paidRunLimit: 3 }), saved?.config);
+check('saved nodes are task nodes', saved && saved.projects[0].graph.nodes.filter(n => n.kind === 'task').length === 3 && !JSON.stringify(saved).includes('sk-secret'), null);
 
 // 2. MCP: legacy type aliases and param names, validation.
 const add = await mcp('add_node', { type: 'video', params: { quality: '1080p', duration: '8', audio: false, model: 'kling-3.0-pro' } });
@@ -167,8 +206,7 @@ const paletteText = await page.evaluate(() => document.body.innerText);
 check('palette groups', ['IMAGE', 'VIDEO', 'AUDIO', 'EFFECTS'].every(x => paletteText.includes(x)) && paletteText.includes('Generate video') && !paletteText.includes('PixVerse · video'), null);
 
 // 4. Inspector on the migrated node.
-await page.click('[data-node-id="v1"]', { position: { x: 60, y: 12 } });
-await page.waitForTimeout(400);
+await selectNode('v1');
 const inspector = await page.evaluate(() => document.body.innerText);
 check('inspector sections', ['PROVIDER', 'MODEL', 'QUALITY', 'ASPECT RATIO', 'DURATION', 'GENERATION', 'FLAGS', 'ADVANCED', 'RESOLVED COMMAND'].every(x => inspector.includes(x)), null);
 await inspectorClick('9:16');
@@ -183,8 +221,7 @@ v1b = (await mcp('get_graph')).nodes.find(n => n.id === 'v1');
 check('inspector toggle clears', v1b.params.off_peak === undefined, v1b.params);
 
 // 5. A node that kept its raw command can be reset to settings.
-await page.click('[data-node-id="r1"]', { position: { x: 60, y: 12 } });
-await page.waitForTimeout(300);
+await selectNode('r1');
 const rawText = await page.evaluate(() => document.body.innerText);
 check('raw node notice', rawText.includes('CUSTOM COMMAND') && rawText.includes('--frobnicate'), null);
 await page.getByText('Reset to standard settings').click();
@@ -193,8 +230,7 @@ const r1b = (await mcp('get_graph')).nodes.find(n => n.id === 'r1');
 check('raw node reset', !r1b.params._raw_args && r1b.params.resolution === '1080p', r1b);
 
 // 7. Switch the migrated video node to fal.ai.
-await page.click('[data-node-id="v1"]', { position: { x: 60, y: 12 } });
-await page.waitForTimeout(300);
+await selectNode('v1');
 const providerSelect = page.locator('select').filter({ has: page.locator('option[value="fal"]') }).first();
 await providerSelect.selectOption('fal');
 await page.waitForTimeout(400);
@@ -236,6 +272,95 @@ const badModel = await mcp('set_params', { node_id: 'v1', params: { model: 'sora
 check('mcp strict model check', !!badModel.error && badModel.error.includes('veo-3.1-fast'), badModel);
 const unsupported = await mcp('set_params', { node_id: falImg.node_id, params: { guidance_scale: 3 } });
 check('mcp per-model param check', !!unsupported.error && unsupported.error.includes('nano-banana'), unsupported);
+
+// 12. Resume a fal run interrupted by quitting the app.
+const interrupted = await mcp('get_node_result', { node_id: 'f1' });
+check('in-flight fal run reloads as interrupted', interrupted.state === 'interrupted' && /Resume/.test(interrupted.note || ''), interrupted);
+const queuedGone = await mcp('get_node_result', { node_id: 'p0' });
+check('queued-only result is dropped', queuedGone.state === 'idle', queuedGone);
+await mcp('switch_project', { project_id: 'p_legacy' });
+await page.evaluate(() => {
+  // Select f1 through the canvas: it sits off-screen at (1000, 600).
+  document.querySelector('[data-node-id="f1"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }));
+});
+await page.waitForTimeout(300);
+let resumeBtn = page.getByText('Resume', { exact: true });
+if (!(await resumeBtn.count())) {
+  await page.evaluate(() => document.querySelector('[data-node-id="f1"]').scrollIntoView());
+  await selectNode('f1');
+  await page.waitForTimeout(300);
+}
+await shot('inspector-resume');
+await page.getByText('Resume', { exact: true }).first().click();
+await page.waitForTimeout(400);
+const resumed = await mcp('get_node_result', { node_id: 'f1' });
+check('resume collects the result', resumed.state === 'done' && resumed.outputs?.[0]?.path === '/tmp/resumed.png', resumed);
+
+// 13. Compare via MCP: two fal variants of the PixVerse video node.
+const cmp = await mcp('compare_node', { node_id: add.node_id, variants: [{ provider: 'fal', model: 'veo-3.1-fast' }, { provider: 'fal', model: 'kling-2.5-turbo-pro' }] });
+check('compare_node creates variants and a pick', cmp.ok && cmp.variant_node_ids.length === 2 && !!cmp.pick_node_id, cmp);
+let g2 = await mcp('get_graph');
+const veoVariant = g2.nodes.find(n => n.id === cmp.variant_node_ids[0]);
+// PixVerse's 8 s is valid for Veo; PixVerse-only settings are dropped and reported.
+check('variant settings fitted to the model', veoVariant.provider === 'fal' && veoVariant.model === 'veo-3.1-fast' && veoVariant.params.duration_s === 8 && veoVariant.params.timeout === undefined
+  && (cmp.adjusted_params?.[veoVariant.id] || []).includes('timeout removed'), { veoVariant, adjusted: cmp.adjusted_params });
+const into = id => g2.edges.filter(e => e.to === id);
+check('variants share the original inputs', cmp.variant_node_ids.every(id => into(id).some(e => e.from === 'p0' && e.to_port === 'prompt')), g2.edges);
+check('pick is fed by original + variants', into(cmp.pick_node_id).length === 3, into(cmp.pick_node_id));
+const badCmp = await mcp('compare_node', { node_id: add.node_id, variants: [{ provider: 'fal', model: 'sora-9' }] });
+check('compare_node rejects unknown variants', !!badCmp.error && badCmp.error.includes('options:'), badCmp);
+
+// 14. Budget gate: limit 2, the comparison submits 3 paid runs → confirm.
+await page.getByText('Config', { exact: true }).first().click();
+await page.waitForTimeout(300);
+const limitInput = page.locator('input[inputmode="numeric"]').last();
+await limitInput.fill('2');
+await limitInput.press('Enter');
+await page.getByText('Done', { exact: true }).click();
+await page.waitForTimeout(200);
+const run = await mcp('run_node', { node_id: cmp.pick_node_id });
+check('run reports confirmation needed', run.ok && run.paid_generations === 3 && run.needs_user_confirmation === true, run);
+await page.waitForTimeout(300);
+const waitingConfirm = await mcp('get_node_result', { node_id: cmp.pick_node_id });
+text = await page.evaluate(() => document.body.innerText);
+check('confirmation dialog shown', waitingConfirm.state === 'waiting_for_confirmation' && text.includes('Run 3 paid generations?') && (await page.evaluate(() => window.__runs.length)) === 0, waitingConfirm);
+await shot('paid-run-confirm');
+await page.getByText('Run 3', { exact: true }).click();
+
+// 15. The failed Veo variant doesn't block the Pick; the others are offered.
+let pickState;
+for (let i = 0; i < 40; i++) {
+  pickState = await mcp('get_node_result', { node_id: cmp.pick_node_id });
+  if (pickState.state === 'waiting_for_pick') break;
+  await page.waitForTimeout(100);
+}
+check('pick proceeds without the failed variant', pickState.state === 'waiting_for_pick' && pickState.candidates === 2, pickState);
+const veoResult = await mcp('get_node_result', { node_id: cmp.variant_node_ids[0] });
+check('failed variant reports its error', veoResult.state === 'error' && /safety checker/.test(veoResult.error || ''), veoResult);
+await page.evaluate(() => window.AtlasRunner.pick(1));
+await page.waitForTimeout(400);
+const picked = await mcp('get_node_result', { node_id: cmp.pick_node_id });
+check('pick completes', picked.state === 'done', picked);
+const pvCost = await mcp('get_node_result', { node_id: add.node_id });
+check('PixVerse credits recorded', pvCost.cost?.amount === 30 && pvCost.cost?.unit === 'PixVerse credits', pvCost);
+const errorClose = page.getByText('Close', { exact: true });
+if (await errorClose.count()) await errorClose.first().click();
+await page.keyboard.press('Escape');
+await page.mouse.click(700, 700);
+await page.waitForTimeout(300);
+text = await page.evaluate(() => document.body.innerText);
+check('graph shows reported spend', /REPORTED SPEND[\s\S]*30 PixVerse credits/.test(text), null);
+
+// 16. Compare from the Inspector.
+await selectNode('v1');
+await inspectorClick('Compare with other models…');
+await inspectorClick('fal.ai · Hailuo-02 Standard');
+await shot('inspector-compare');
+await inspectorClick('Create comparison (2 runs)');
+await page.waitForTimeout(300);
+const g3 = await mcp('get_graph');
+const uiPick = g3.nodes.find(n => n.type === 'pick' && n.id !== cmp.pick_node_id);
+check('inspector comparison built', !!uiPick && g3.edges.filter(e => e.to === uiPick.id).length === 2 && g3.nodes.some(n => n.model === 'hailuo-02-standard'), uiPick);
 
 // 11. Clicking a palette entry adds a task node (last: it may land on top of other nodes).
 const before = (await mcp('get_graph')).nodes.length;

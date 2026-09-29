@@ -49,6 +49,29 @@ async fn run_node(
         .unwrap_or_else(|| Err("aborted".to_string()))
 }
 
+/// Resume a task node's job from an interrupted run (same cancel and
+/// progress plumbing as `run_node`).
+#[tauri::command]
+async fn resume_task(
+    app: AppHandle,
+    window: Window,
+    node: Value,
+    job: Value,
+    config: Value,
+    run_id: String,
+) -> Result<Value, String> {
+    let (cancel, _guard) = providers::cancel::register(&run_id);
+    let ctx = providers::RunCtx {
+        app,
+        window,
+        config,
+        run_id,
+    };
+    providers::cancel::until_cancelled(providers::resume_task(node, job, ctx), cancel)
+        .await
+        .unwrap_or_else(|| Err("aborted".to_string()))
+}
+
 /// The command a task node would run, for the Inspector.
 #[tauri::command]
 fn preview_task(node: Value) -> Result<Vec<String>, String> {
@@ -286,6 +309,7 @@ fn main() {
             run_node,
             cancel_run,
             preview_task,
+            resume_task,
             providers::secrets::provider_secret_status,
             providers::secrets::set_provider_secret,
             providers::secrets::clear_provider_secret,

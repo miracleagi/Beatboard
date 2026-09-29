@@ -89,6 +89,10 @@ The settings each one offers come from `src/providers/pixverse.json` and `src/pr
 5. Click **Run** (top right) to run the entire graph
 6. Click **Stop** to abort a running graph
 
+**Compare models:** select a generator node → **Compare with other models…** in the Inspector. Beatboard adds a copy per model (same inputs), feeds them all into a Pick node, and routes the Pick to whatever came after the original — run the Pick to see the results side by side. A variant that fails doesn't block the others.
+
+**Spending:** before a run that submits more paid generations than your limit (default 3, **⚙ Config → Spending**), Beatboard asks first. PixVerse credits charged are shown per node after a run. If Beatboard quits while a fal.ai run is in flight, the node shows **Resume**, which collects the result without paying again.
+
 Solid edges are required dependencies: every upstream node must have a usable result before its downstream node can run. Dashed edges are optional references and do not gate execution. **Run from here** automatically runs missing ancestors while reusing still-valid cached outputs.
 
 **Shortcuts:**
@@ -123,7 +127,7 @@ Then ask your agent something like *"storyboard a 30-second product teaser: gene
 animate each, stitch them together"* — the graph grows on the canvas in real time, and every
 agent edit is undoable with ⌘Z.
 
-**Tools exposed:** `describe_capabilities` · `list_projects` · `create_project` · `switch_project` · `delete_project` · `get_graph` · `add_node` · `connect_nodes` · `set_params` · `run_node` · `get_node_result`
+**Tools exposed:** `describe_capabilities` · `list_projects` · `create_project` · `switch_project` · `delete_project` · `get_graph` · `add_node` · `connect_nodes` · `set_params` · `compare_node` · `run_node` · `get_node_result`
 
 - The server listens on `127.0.0.1:4923` (override with the `BEATBOARD_MCP_PORT` env var), only while Beatboard is running, and never accepts remote connections.
 - Generation nodes run through the PixVerse CLI managed privately by Beatboard and your PixVerse account — exactly as if you clicked Run.

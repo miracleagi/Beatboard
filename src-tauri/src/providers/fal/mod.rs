@@ -388,14 +388,8 @@ impl FalClient {
         Ok(file_url.to_string())
     }
 
-    /// Upload inputs, run the request through the queue and download its
-    /// media into `dir`. Returns the raw output JSON and the local thumbs.
-    pub async fn run(
-        &self,
-        plan: &Plan,
-        dir: &Path,
-        progress: impl Fn(f64),
-    ) -> Result<(Value, Vec<Thumb>), String> {
+    /// Upload inputs and submit the request to the queue.
+    pub async fn submit(&self, plan: &Plan, progress: impl Fn(f64)) -> Result<Job, String> {
         progress(0.02);
         let mut urls = Vec::new();
         for media in &plan.images {
@@ -422,21 +416,33 @@ impl FalClient {
             self.queue_base,
             app.join("/")
         );
-        let status_url = submitted["status_url"]
-            .as_str()
-            .map(String::from)
-            .unwrap_or(format!("{base}/status"));
-        let response_url = submitted["response_url"]
-            .as_str()
-            .map(String::from)
-            .unwrap_or(base.clone());
-        let cancel_url = submitted["cancel_url"]
-            .as_str()
-            .map(String::from)
-            .unwrap_or(format!("{base}/cancel"));
+        let url = |key: &str, fallback: String| {
+            submitted[key]
+                .as_str()
+                .map(String::from)
+                .unwrap_or(fallback)
+        };
+        Ok(Job {
+            status_url: url("status_url", format!("{base}/status")),
+            response_url: url("response_url", base.clone()),
+            cancel_url: url("cancel_url", format!("{base}/cancel")),
+            request_id,
+            output: plan.output.clone(),
+            model: plan.model.clone(),
+        })
+    }
+
+    /// Poll a submitted request until it finishes, then download its media
+    /// into `dir`. Dropping this future (Stop) cancels the request on fal.
+    pub async fn wait(
+        &self,
+        job: &Job,
+        dir: &Path,
+        progress: impl Fn(f64),
+    ) -> Result<(Value, Vec<Thumb>), String> {
         let mut guard = CancelOnDrop {
             client: self.clone(),
-            url: Some(cancel_url),
+            url: Some(job.cancel_url.clone()),
         };
 
         let started = Instant::now();
@@ -446,7 +452,7 @@ impl FalClient {
             if started.elapsed() > RUN_TIMEOUT {
                 return Err("fal.ai request timed out after 30 minutes".into());
             }
-            match self.json(self.http.get(&status_url)).await {
+            match self.json(self.http.get(&job.status_url)).await {
                 Ok(status) => {
                     errors = 0;
                     match status["status"].as_str() {
@@ -473,23 +479,23 @@ impl FalClient {
         }
 
         // COMPLETED also covers failures: the result call reports them.
-        let output = self.json(self.http.get(&response_url)).await;
+        let output = self.json(self.http.get(&job.response_url)).await;
         guard.url = None; // finished: nothing to cancel any more
         let output = output?;
         progress(0.9);
 
-        let media = output_media(&output, &plan.output);
+        let media = output_media(&output, &job.output);
         if media.is_empty() {
             return Err(format!(
                 "{} returned no {}",
-                model_label(&plan.model),
-                plan.output
+                model_label(&job.model),
+                job.output
             ));
         }
         tokio::fs::create_dir_all(dir)
             .await
             .map_err(|e| e.to_string())?;
-        let kind = if plan.output == "video" {
+        let kind = if job.output == "video" {
             "video"
         } else {
             "image"
@@ -497,7 +503,7 @@ impl FalClient {
         let mut thumbs = Vec::new();
         for (i, (url, content_type)) in media.iter().enumerate() {
             let ext = extension_for(url, content_type.as_deref(), kind);
-            let path = dir.join(format!("{request_id}-{i}.{ext}"));
+            let path = dir.join(format!("{}-{i}.{ext}", job.request_id));
             let res = self
                 .http
                 .get(url)
@@ -519,7 +525,7 @@ impl FalClient {
                 .map_err(|e| e.to_string())?;
             thumbs.push(Thumb {
                 seed: url.clone(),
-                label: model_label(&plan.model),
+                label: model_label(&job.model),
                 thumb_type: kind.to_string(),
                 chosen: i == 0,
                 url: Some(url.clone()),
@@ -530,6 +536,31 @@ impl FalClient {
         progress(1.0);
         Ok((output, thumbs))
     }
+
+    /// Submit, report the job (so it can be resumed after a restart), wait.
+    pub async fn run(
+        &self,
+        plan: &Plan,
+        dir: &Path,
+        progress: impl Fn(f64),
+        on_submitted: impl FnOnce(&Job),
+    ) -> Result<(Value, Vec<Thumb>), String> {
+        let job = self.submit(plan, &progress).await?;
+        on_submitted(&job);
+        self.wait(&job, dir, progress).await
+    }
+}
+
+/// A submitted fal request — everything needed to pick it up again.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Job {
+    pub request_id: String,
+    pub status_url: String,
+    pub response_url: String,
+    pub cancel_url: String,
+    /// `images` or `video`.
+    pub output: String,
+    pub model: String,
 }
 
 // ─── Provider ───────────────────────────────────────────────────────────────
@@ -557,10 +588,48 @@ impl Provider for FalProvider {
                 .map_err(ProviderError::Remote)?
                 .join("fal");
             let (raw, thumbs) = FalClient::new(key)
-                .run(&plan, &dir, |p| ctx.progress(p))
+                .run(
+                    &plan,
+                    &dir,
+                    |p| ctx.progress(p),
+                    |job| ctx.job(serde_json::to_value(job).unwrap_or_default()),
+                )
                 .await
                 .map_err(ProviderError::Remote)?;
-            Ok(TaskOutput { thumbs, raw })
+            // fal's result carries no price; the account's usage page has it.
+            Ok(TaskOutput {
+                thumbs,
+                raw,
+                cost: None,
+            })
+        })
+    }
+
+    fn resume<'a>(
+        &'a self,
+        job: Value,
+        ctx: &'a RunCtx,
+    ) -> BoxFuture<'a, Result<TaskOutput, ProviderError>> {
+        Box::pin(async move {
+            let job: Job = serde_json::from_value(job)
+                .map_err(|e| invalid(format!("not a fal.ai job: {e}")))?;
+            let key = secrets::get("fal")
+                .map_err(ProviderError::Remote)?
+                .ok_or_else(|| {
+                    invalid("Add your fal.ai API key in Config → Providers to resume this node")
+                })?;
+            let dir = runs_dir(&ctx.app)
+                .map_err(ProviderError::Remote)?
+                .join("fal");
+            let (raw, thumbs) = FalClient::new(key)
+                .wait(&job, &dir, |p| ctx.progress(p))
+                .await
+                .map_err(ProviderError::Remote)?;
+            Ok(TaskOutput {
+                thumbs,
+                raw,
+                cost: None,
+            })
         })
     }
 

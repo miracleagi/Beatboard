@@ -352,6 +352,11 @@
       const unlisten = await listen(`progress:${runId}`, (event) => {
         if (!isAborted(ctx)) onProgress(Number(event.payload) || 0);
       });
+      // A provider job was submitted: the runner stores it so the run can be
+      // resumed if Beatboard quits before it finishes.
+      const unlistenJob = await listen(`job:${runId}`, (event) => {
+        if (!isAborted(ctx) && typeof ctx.onJob === 'function') ctx.onJob(event.payload);
+      });
 
       // Stop: the runner only flips an abort flag, so watch it and ask Rust
       // to kill the node's process instead of letting it run to completion.
@@ -377,6 +382,21 @@
         return { ok: false, error: String(e) };
       } finally {
         clearInterval(abortWatch);
+        unlisten();
+        unlistenJob();
+      }
+    },
+
+    // Finish a job recorded by an interrupted run (see ctx.onJob above).
+    async resumeNode(node, job, ctx, onProgress) {
+      const runId = `resume-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const unlisten = await listen(`progress:${runId}`, (event) => onProgress(Number(event.payload) || 0));
+      try {
+        const result = await invoke('resume_task', { node, job, config: ctx.config, runId });
+        return localizeResult(result);
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      } finally {
         unlisten();
       }
     },

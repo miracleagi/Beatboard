@@ -14,6 +14,24 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
   const start = React.useCallback(async (fromNodeId) => {
     if (ref.current.active) return;
     const order = runOrderNodeIds(graph, fromNodeId, { getResult: getRunResult });
+
+    // Budget gate: runs that would submit more paid generations than the
+    // user's limit wait for an explicit OK (the run is marked active so a
+    // second click can't start another one meanwhile).
+    const paid = paidRunSummary(graph, order);
+    const limit = config && 'paidRunLimit' in config ? config.paidRunLimit : DEFAULT_PAID_RUN_LIMIT;
+    if (needsPaidRunConfirmation(paid, limit)) {
+      const confirmed = await new Promise(resolve => {
+        ref.current = { ...EMPTY, active: true, waitingForConfirm: { summary: paid, limit, resolve } };
+        force();
+      });
+      if (!confirmed) {
+        ref.current = { ...EMPTY };
+        force();
+        return;
+      }
+    }
+
     const queuedResults = Object.fromEntries(order.map(id => [id, { state: 'queued', progress: 0 }]));
     dispatch({ type: 'CLEAR_RUN_RESULTS_FOR_NODES', projectId, nodeIds: order });
     ref.current = { active: true, results: queuedResults, current: null, progress: 0, aborted: false, queue: order, waitingForPick: null };
@@ -67,7 +85,10 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
 
       // ── Pick / Select node: pause and wait for user to choose ──────────
       if (node.kind === 'select') {
-        const candidates = upstreamThumbs(deps, { forSelect: true });
+        // Only inputs that produced output count — a failed variant in a
+        // comparison must not contribute thumbnails cached from older runs.
+        const readyDeps = deps.filter(d => nodeHasUsableOutput(d.from, d.result));
+        const candidates = upstreamThumbs(readyDeps, { forSelect: true });
         if (!candidates.length) {
           ref.current.results[id] = { state: 'error', progress: 0, error: 'No upstream results yet — run upstream nodes first.' };
           dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: ref.current.results[id] });
@@ -122,7 +143,12 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
           outputDir: projectOutputDir || '',
         },
       };
-      const ctx = { config: runConfig, abortRef: ref, get aborted() { return ref.current.aborted; } };
+      const ctx = {
+        config: runConfig, abortRef: ref, get aborted() { return ref.current.aborted; },
+        // Persist the provider job as soon as it exists, so quitting mid-run
+        // leaves something to resume instead of paying for a new run.
+        onJob: (job) => dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: { state: 'running', progress: 0, job } }),
+      };
       let res;
       try {
         res = await Executor.runNode(node, deps, ctx, (p) => {
@@ -136,6 +162,8 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
       }
       if (ref.current.aborted || res?.error === 'aborted') {
         delete ref.current.results[id];
+        // Stop cancelled the provider job: nothing left to resume.
+        dispatch({ type: 'CLEAR_RUN_RESULTS_FOR_NODES', projectId, nodeIds: [id] });
         break;
       }
       if (res?.ok) {
@@ -181,6 +209,12 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
   }, [projectId, projectName, projectOutputDir, graph, dispatch, config, getRunResult]);
 
   const abort = React.useCallback(() => {
+    if (ref.current.waitingForConfirm) {
+      const { resolve } = ref.current.waitingForConfirm;
+      ref.current.waitingForConfirm = null;
+      resolve(false);
+      return;
+    }
     ref.current.aborted = true;
     if (ref.current.waitingForPick) {
       const { resolve } = ref.current.waitingForPick;
@@ -196,6 +230,16 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
     force();
   }, [dispatch, projectId]);
 
+  // Called by the paid-run confirmation dialog
+  const confirmRun = React.useCallback((ok) => {
+    if (ref.current.waitingForConfirm) {
+      const { resolve } = ref.current.waitingForConfirm;
+      ref.current.waitingForConfirm = null;
+      force();
+      resolve(!!ok);
+    }
+  }, []);
+
   // Called by the PickModal when the user clicks a thumbnail
   const pick = React.useCallback((selectedIndex) => {
     if (ref.current.waitingForPick) {
@@ -208,7 +252,7 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
 
   return {
     state: ref.current,
-    start, abort, reset, pick,
+    start, abort, reset, pick, confirmRun,
     getOverride: (nodeId) => {
       if (ref.current.active && ref.current.results[nodeId]) {
         return ref.current.results[nodeId];
@@ -1028,6 +1072,18 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
         </span>
       </div>
 
+      {/* Paid-run confirmation — above the user's limit, a run waits here */}
+      {runner.state.waitingForConfirm && (
+        <PaidRunConfirmModal
+          t={t}
+          summary={runner.state.waitingForConfirm.summary}
+          limit={runner.state.waitingForConfirm.limit}
+          onConfirm={() => runner.confirmRun(true)}
+          onCancel={() => runner.confirmRun(false)}
+          onOpenConfig={() => { runner.confirmRun(false); dispatch({ type: 'UI_PATCH', patch: { configOpen: true } }); }}
+        />
+      )}
+
       {/* Pick modal — suspends the run until user selects a thumbnail */}
       {runner.state.waitingForPick && (
         <PickModal
@@ -1239,6 +1295,43 @@ function ErrorModal({ t, errors, onClose, onOpenConfig, onSelectNode }) {
             <button style={btnStyle} onClick={copyAll}>{copied ? '已复制 ✓' : '复制错误'}</button>
             <button style={btnStyle} onClick={onClose}>关闭</button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaidRunConfirmModal({ t, summary, limit, onConfirm, onCancel, onOpenConfig }) {
+  const rows = Object.entries(summary.byProvider);
+  return (
+    <div onClick={onCancel} style={{
+      position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(8,11,16,0.72)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: FONT_UI,
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: 420, background: t.bg2, border: `1px solid ${t.borderStrong}`, borderRadius: 10,
+        boxShadow: '0 24px 60px rgba(0,0,0,0.6)', padding: '16px 18px',
+      }}>
+        <div style={{ color: t.text, fontSize: 14, fontWeight: 600 }}>
+          Run {summary.total} paid generation{summary.total === 1 ? '' : 's'}?
+        </div>
+        <div style={{ marginTop: 6, color: t.textMute, fontFamily: FONT_MONO, fontSize: 10.5, lineHeight: 1.5 }}>
+          This run submits more than your limit of {limit}. Each is billed to your account with that provider.
+        </div>
+        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rows.map(([provider, r]) => (
+            <div key={provider} style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FONT_MONO, fontSize: 11 }}>
+              <span style={{ color: t.text, flex: 1 }}>{providerName(provider)}</span>
+              <span style={{ color: t.textMid }}>{r.runs} node{r.runs === 1 ? '' : 's'}</span>
+              <span style={{ color: t.textMute }}>· {r.outputs} output{r.outputs === 1 ? '' : 's'}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span onClick={onOpenConfig} style={{ color: t.accent, fontFamily: FONT_MONO, fontSize: 10, cursor: 'pointer' }}>change limit</span>
+          <div style={{ flex: 1 }}/>
+          <Btn theme="dark" onClick={onCancel}>Cancel</Btn>
+          <Btn primary theme="dark" onClick={onConfirm}>Run {summary.total}</Btn>
         </div>
       </div>
     </div>

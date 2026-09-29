@@ -87,6 +87,10 @@ Beatboard 会自行管理所有运行依赖：ffmpeg 已内置，PixVerse CLI �
 5. 点击右上角 **Run** 运行整张图
 6. 运行中可点击 **Stop** 中断
 
+**模型对比：**选中一个生成节点 → Inspector 里点 **Compare with other models…**。Beatboard 会为每个模型复制一个节点（输入相同），把它们都接入一个 Pick 节点，并把原节点的下游改接到 Pick——运行 Pick 即可并排查看结果。某个模型失败不会拖住其他结果。
+
+**花费控制：**一次运行要提交的付费生成次数超过上限（默认 3，在 **⚙ Config → Spending** 设置）时，会先询问你。运行后每个节点会显示 PixVerse 实际扣除的积分。如果 fal.ai 任务运行中 Beatboard 被关闭，节点会显示 **Resume**，可以直接取回结果而无需重复付费。
+
 实线连接是必需依赖：前置节点全部产生有效结果后，下游节点才会运行。虚线连接是可选参考，不参与依赖门禁。**Run from here** 会自动补跑缺少结果的上游节点，并复用仍然有效的已有结果。
 
 **快捷操作：**
@@ -120,7 +124,7 @@ claude mcp add --transport http beatboard http://127.0.0.1:4923/mcp
 然后对 agent 说类似 *"做一个 30 秒产品预告片的分镜:生成 4 张静帧,逐张转成动画,最后拼接成片"*——
 节点图会实时出现在画布上,agent 的每一步操作都可以用 ⌘Z 撤销。
 
-**暴露的工具:** `describe_capabilities` · `list_projects` · `create_project` · `switch_project` · `delete_project` · `get_graph` · `add_node` · `connect_nodes` · `set_params` · `run_node` · `get_node_result`
+**暴露的工具:** `describe_capabilities` · `list_projects` · `create_project` · `switch_project` · `delete_project` · `get_graph` · `add_node` · `connect_nodes` · `set_params` · `compare_node` · `run_node` · `get_node_result`
 
 - Server 监听 `127.0.0.1:4923`(可用环境变量 `BEATBOARD_MCP_PORT` 修改),仅在 Beatboard 运行期间存在,不接受远程连接
 - 生成节点通过 Beatboard 私有管理的 PixVerse CLI 和你的 PixVerse 账号执行，和手动点 Run 完全一致

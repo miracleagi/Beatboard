@@ -669,6 +669,12 @@ function Inspector({ t, state, dispatch }) {
             <Stat t={t} k="last run" v={Object.keys(project.runResults).length > 0
               ? `${Object.values(project.runResults).filter(r => r.state === 'done').length} done`
               : 'never'}/>
+            {Object.keys(reportedSpend(project.runResults)).length > 0 && (<>
+              <div style={{ height: 8 }}/>
+              <Stat t={t} k="reported spend" v={Object.entries(reportedSpend(project.runResults))
+                .map(([unit, amount]) => `${Math.round(amount * 100) / 100} ${unit}`).join(' · ')}
+                sub="as charged by providers for the current results"/>
+            </>)}
           </div>
           <ProjectSaveDirectory t={t} project={project} dispatch={dispatch}/>
           <div style={{ padding: '12px 14px', borderBottom: `1px solid ${t.border}` }}>
@@ -771,7 +777,8 @@ function Inspector({ t, state, dispatch }) {
             <SectionLabel t={t}>Last run</SectionLabel>
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                background: result.state === 'done' ? t.green : result.state === 'error' || result.state === 'blocked' ? t.red : t.textMute }}/>
+                background: result.state === 'done' ? t.green : result.state === 'error' || result.state === 'blocked' ? t.red
+                  : result.state === 'interrupted' ? t.amber : t.textMute }}/>
               <span style={{ color: t.text, fontFamily: FONT_MONO, fontSize: 11, flexShrink: 0 }}>{result.state}</span>
               {result.error && (
                 <span
@@ -798,10 +805,18 @@ function Inspector({ t, state, dispatch }) {
                 >详情</span>
               )}
             </div>
+            {result.state === 'interrupted' && result.job && (
+              <ResumeJob t={t} node={node} job={result.job} project={project} state={state} dispatch={dispatch}/>
+            )}
+            {result.cost && Number.isFinite(result.cost.amount) && (
+              <div style={{ marginTop: 6, color: t.textMid, fontFamily: FONT_MONO, fontSize: 10.5 }}>
+                charged {result.cost.amount} {result.cost.unit}
+              </div>
+            )}
           </div>
         )}
 
-        {isTask && <TaskInspector t={t} node={node} onPatch={onPatch} dispatch={dispatch}/>}
+        {isTask && <TaskInspector t={t} node={node} graph={graph} onPatch={onPatch} dispatch={dispatch}/>}
 
         {isCli && (
           <>
@@ -1483,6 +1498,79 @@ function ProviderKeyRow({ t, manifest }) {
   );
 }
 
+// Finish a provider job left behind when Beatboard quit mid-run: polls the
+// same request instead of submitting (and paying for) a new one.
+function ResumeJob({ t, node, job, project, state, dispatch }) {
+  const [progress, setProgress] = React.useState(null);
+  if (typeof window.AtlasExecutor?.resumeNode !== 'function') return null;
+  const setResult = (result) => dispatch({ type: 'SET_RUN_RESULT', projectId: project.id, nodeId: node.id, result });
+  const resume = async () => {
+    setProgress(0);
+    setResult({ state: 'running', progress: 0, job });
+    const res = await window.AtlasExecutor.resumeNode(node, job, { config: state.config }, setProgress);
+    setProgress(null);
+    if (res?.ok) {
+      const { ok, ...rest } = res;
+      setResult({ ...rest, state: 'done', progress: 1 });
+    } else {
+      // Keep the job so a transient failure can be retried.
+      setResult({ state: 'interrupted', progress: 0, job, error: res?.error || 'resume failed' });
+    }
+  };
+  return (
+    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <Btn size="sm" primary theme="dark" leftIcon="history" style={{ opacity: progress === null ? 1 : 0.55 }}
+        onClick={() => progress === null && resume()}>
+        {progress === null ? 'Resume' : `Resuming… ${Math.round(progress * 100)}%`}
+      </Btn>
+      <span style={{ color: t.textMute, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.4 }}>
+        collects {providerName(node.provider)} request {String(job.request_id || '').slice(0, 8)}… without re-running it
+      </span>
+    </div>
+  );
+}
+
+// Config: how many paid generations a run may submit before it asks first.
+function PaidRunLimitRow({ t, state, dispatch }) {
+  const limit = 'paidRunLimit' in state.config ? state.config.paidRunLimit : DEFAULT_PAID_RUN_LIMIT;
+  const never = limit === null;
+  const [draft, setDraft] = React.useState(never ? '' : String(limit));
+  React.useEffect(() => { setDraft(never ? '' : String(limit)); }, [limit]);
+  const set = (value) => dispatch({ type: 'SET_CONFIG', patch: { paidRunLimit: value } });
+  const commit = () => {
+    const n = Number(draft);
+    if (Number.isInteger(n) && n >= 0) set(n);
+    else setDraft(never ? '' : String(limit));
+  };
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{
+        color: t.textMute, fontFamily: FONT_MONO, fontSize: 9.5,
+        letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8,
+      }}>Spending</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: t.text, fontSize: 12 }}>
+        <span>Ask before a run submits more than</span>
+        <input
+          value={draft}
+          disabled={never}
+          inputMode="numeric"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+          style={{ ...inputStyle(t), width: 52, textAlign: 'center', opacity: never ? 0.5 : 1 }}
+        />
+        <span>paid generations</span>
+      </div>
+      <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <ToggleChip t={t} active={never} onClick={() => set(never ? DEFAULT_PAID_RUN_LIMIT : null)}>never ask</ToggleChip>
+        <span style={{ flex: 3, color: t.textMute, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.45 }}>
+          0 asks before every paid run. Costs aren't known in advance; PixVerse reports credits after each run.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function ProviderKeysPanel({ t }) {
   const keyed = providerCatalogList().filter(m => m.auth === 'api-key');
   if (!keyed.length || !window.__TAURI__) return null;
@@ -1499,7 +1587,63 @@ function ProviderKeysPanel({ t }) {
   );
 }
 
-function TaskInspector({ t, node, onPatch, dispatch }) {
+// Run this node on other providers / models side by side: creates one copy
+// per choice plus a Pick node that the original's downstream now reads from.
+function CompareSection({ t, node, graph, dispatch }) {
+  const [open, setOpen] = React.useState(false);
+  const [chosen, setChosen] = React.useState([]);
+  const [error, setError] = React.useState('');
+  React.useEffect(() => { setOpen(false); setChosen([]); setError(''); }, [node.id]);
+  const options = comparisonOptions(node.capability)
+    .filter(o => !(o.provider === node.provider && (o.model || '') === (node.model || '')));
+  if (!options.length) return null;
+  const key = o => `${o.provider}|${o.model || ''}`;
+  const toggle = o => setChosen(c => c.includes(key(o)) ? c.filter(k => k !== key(o)) : [...c, key(o)]);
+  const create = () => {
+    const variants = options.filter(o => chosen.includes(key(o))).map(({ provider, model }) => ({ provider, model }));
+    const result = buildComparison(graph, node.id, variants);
+    if (result.error) { setError(result.error); return; }
+    dispatch({ type: 'PATCH_GRAPH', fn: g => buildComparison(g, node.id, variants).graph || g });
+    dispatch({ type: 'UI_PATCH', patch: { selectedNodeId: result.pickId, selectedEdgeIdx: null } });
+  };
+  return (
+    <div style={sectionBox(t)}>
+      <SectionLabel t={t}>Compare</SectionLabel>
+      {!open ? (
+        <Btn size="sm" theme="dark" leftIcon="vary" style={{ marginTop: 8, width: '100%', justifyContent: 'center' }}
+          onClick={() => setOpen(true)}>Compare with other models…</Btn>
+      ) : (<>
+        <div style={{ marginTop: 6, color: t.textMute, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.5 }}>
+          Runs the same inputs on each choice and adds a Pick node; whatever you pick flows downstream. Every variant is a separate paid run.
+        </div>
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {options.map(o => {
+            const on = chosen.includes(key(o));
+            return (
+              <div key={key(o)} onClick={() => toggle(o)} style={{
+                display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', userSelect: 'none',
+                padding: '4px 7px', borderRadius: 4,
+                background: on ? t.accentBg : t.panel, border: `1px solid ${on ? t.accentBorder : t.border}`,
+                color: on ? t.accent : t.textMid, fontFamily: FONT_MONO, fontSize: 10,
+              }}>
+                <Icon name={on ? 'check' : 'plus'} size={9} color={on ? t.accent : t.textMute}/>
+                {o.label}
+              </div>
+            );
+          })}
+        </div>
+        {error && <div style={{ marginTop: 6, color: t.red, fontFamily: FONT_MONO, fontSize: 10 }}>{error}</div>}
+        <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+          <Btn size="sm" primary theme="dark" style={{ flex: 1, justifyContent: 'center', opacity: chosen.length ? 1 : 0.55 }}
+            onClick={() => chosen.length && create()}>Create comparison ({chosen.length + 1} runs)</Btn>
+          <Btn size="sm" theme="dark" onClick={() => { setOpen(false); setChosen([]); setError(''); }}>Cancel</Btn>
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+function TaskInspector({ t, node, graph, onPatch, dispatch }) {
   const providers = providersFor(node.capability);
   const entry = providerCapability(node.provider, node.capability);
   const specs = nodeParamSpecs(node);
@@ -1618,6 +1762,8 @@ function TaskInspector({ t, node, onPatch, dispatch }) {
       <TaskParamSection key={section.name} t={t} node={node} name={section.name} specs={section.specs}
         onSet={(spec, value) => commit(setTaskParam(node, spec, value))}/>
     ))}
+
+    {!raw && <CompareSection t={t} node={node} graph={graph} dispatch={dispatch}/>}
 
     <TaskCommandPreview t={t} node={node}/>
   </>);
@@ -1847,6 +1993,8 @@ function ConfigModal({ t, state, dispatch }) {
           <ManagedRuntimePanel t={t} state={state}/>
 
           <ProviderKeysPanel t={t}/>
+
+          <PaidRunLimitRow t={t} state={state} dispatch={dispatch}/>
 
           <div style={{ marginBottom: 16 }}>
             <div style={{

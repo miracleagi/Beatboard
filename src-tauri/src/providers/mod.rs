@@ -50,6 +50,9 @@ pub struct TaskOutput {
     pub thumbs: Vec<Thumb>,
     /// Raw provider response, kept for debugging.
     pub raw: Value,
+    /// What the provider reported charging for this run, e.g.
+    /// `{ "amount": 30, "unit": "PixVerse credits" }`. None when unreported.
+    pub cost: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -74,6 +77,12 @@ pub struct RunCtx {
 }
 
 impl RunCtx {
+    /// Report a submitted provider job so the frontend can store it and
+    /// resume the run after a restart (see `Provider::resume`).
+    pub fn job(&self, job: Value) {
+        let _ = self.window.emit(&format!("job:{}", self.run_id), job);
+    }
+
     pub fn progress(&self, value: f64) {
         let _ = self
             .window
@@ -95,6 +104,20 @@ pub trait Provider: Send + Sync {
         req: TaskRequest,
         ctx: &'a RunCtx,
     ) -> BoxFuture<'a, Result<TaskOutput, ProviderError>>;
+
+    /// Pick up a job reported through `RunCtx::job` by an earlier run —
+    /// typically one interrupted by quitting the app.
+    fn resume<'a>(
+        &'a self,
+        _job: Value,
+        _ctx: &'a RunCtx,
+    ) -> BoxFuture<'a, Result<TaskOutput, ProviderError>> {
+        Box::pin(async move {
+            Err(ProviderError::InvalidParams(
+                "this provider can't resume runs — run the node again".into(),
+            ))
+        })
+    }
 
     /// Human-readable form of what `run` would execute, for the Inspector.
     fn preview(&self, _req: &TaskRequest) -> Result<Vec<String>, ProviderError> {
@@ -126,12 +149,30 @@ pub async fn run_task(node: Value, deps: Vec<Value>, ctx: RunCtx) -> Result<Valu
         .map_err(|e| e.to_string())?;
     catalog::validate(provider.id(), &req).map_err(|e| e.to_string())?;
     let out = provider.run(req, &ctx).await.map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({
+    Ok(task_result(provider, out))
+}
+
+fn task_result(provider: &dyn Provider, out: TaskOutput) -> Value {
+    let mut result = serde_json::json!({
         "ok": true,
         "provider": provider.id(),
         "thumbs": out.thumbs,
         "raw": out.raw,
-    }))
+    });
+    if let Some(cost) = out.cost {
+        result["cost"] = cost;
+    }
+    result
+}
+
+/// Finish a task node's job from an earlier, interrupted run.
+pub async fn resume_task(node: Value, job: Value, ctx: RunCtx) -> Result<Value, String> {
+    let provider = node_provider(&node)?;
+    let out = provider
+        .resume(job, &ctx)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(task_result(provider, out))
 }
 
 /// What a task node would execute, with each input shown as `<port label>`.

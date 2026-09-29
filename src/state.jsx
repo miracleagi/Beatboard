@@ -292,6 +292,9 @@ function makeInitialState() {
     config: {
       // Optional custom executables; empty = Beatboard's bundled/managed runtime.
       binPaths: { ffmpeg: '', pixverse: '' },
+      // Ask before a run that submits more paid generations than this
+      // (0 = always ask, null = never).
+      paidRunLimit: DEFAULT_PAID_RUN_LIMIT,
     },
     projects: makeDefaultProjects(),
     activeProjectId: 'p_film',
@@ -318,7 +321,59 @@ function makeInitialState() {
 // prototype binary paths; keep only the runtime overrides that still apply.
 function cleanConfig(config) {
   const binPaths = (config && config.binPaths) || {};
-  return { binPaths: { ffmpeg: binPaths.ffmpeg || '', pixverse: binPaths.pixverse || '' } };
+  const limit = config && 'paidRunLimit' in config ? config.paidRunLimit : DEFAULT_PAID_RUN_LIMIT;
+  return {
+    binPaths: { ffmpeg: binPaths.ffmpeg || '', pixverse: binPaths.pixverse || '' },
+    paidRunLimit: limit === null || (Number.isInteger(limit) && limit >= 0) ? limit : DEFAULT_PAID_RUN_LIMIT,
+  };
+}
+
+const DEFAULT_PAID_RUN_LIMIT = 3;
+
+// Results saved mid-run (Beatboard quit while a run was active): nodes whose
+// provider job was recorded become `interrupted` and can be resumed; the rest
+// simply never ran.
+const IN_FLIGHT_STATES = new Set(['running', 'queued', 'waiting_dependencies', 'waiting_user']);
+function settleInterruptedResults(runResults) {
+  const out = {};
+  Object.entries(runResults || {}).forEach(([id, r]) => {
+    if (!r || !IN_FLIGHT_STATES.has(r.state)) { out[id] = r; return; }
+    if (r.job) {
+      out[id] = { state: 'interrupted', progress: 0, job: r.job, error: 'Beatboard closed while this was running — resume to collect the result' };
+    }
+  });
+  return out;
+}
+
+// Paid generations a run will submit: every generator (task) node in the run
+// order, grouped by provider, with how many outputs each asks for.
+function paidRunSummary(graph, order) {
+  const byProvider = {};
+  let total = 0;
+  (order || []).forEach(id => {
+    const node = nodeById(graph, id);
+    if (node?.kind !== 'task') return;
+    const entry = byProvider[node.provider] || (byProvider[node.provider] = { runs: 0, outputs: 0, nodes: [] });
+    entry.runs += 1;
+    entry.outputs += Number(node.params?.count) > 0 ? Number(node.params.count) : 1;
+    entry.nodes.push(id);
+    total += 1;
+  });
+  return { total, byProvider };
+}
+
+function needsPaidRunConfirmation(summary, limit) {
+  return limit !== null && limit !== undefined && summary.total > 0 && summary.total > limit;
+}
+
+// Spend the providers reported for a project's last results, by unit.
+function reportedSpend(runResults) {
+  const totals = {};
+  Object.values(runResults || {}).forEach(r => {
+    const cost = r && r.cost;
+    if (cost && Number.isFinite(cost.amount)) totals[cost.unit] = (totals[cost.unit] || 0) + cost.amount;
+  });
+  return totals;
 }
 
 // ---------- REDUCER ----------
@@ -330,7 +385,12 @@ function appReducer(state, action) {
           ...action.state,
           config: cleanConfig(action.state.config),
           library: action.state.library || [],
-          projects: action.state.projects.map(p => ({ ...p, outputDir: p.outputDir || '', graph: normalizeGraphPorts(p.graph) })),
+          projects: action.state.projects.map(p => ({
+            ...p,
+            outputDir: p.outputDir || '',
+            graph: normalizeGraphPorts(p.graph),
+            runResults: settleInterruptedResults(p.runResults),
+          })),
         }
         : state;
     case 'LIBRARY_ADD': {
@@ -790,10 +850,17 @@ function dependencyReadiness(graph, nodeId, resultForNode) {
       : 'missing_output';
     return { edge, source, result, ready, state, reason: ready ? null : reason };
   });
+  // A Pick chooses among whatever its inputs produced: once nothing is still
+  // pending, one usable candidate is enough (a failed variant in a
+  // comparison must not block the others). Everything else needs all inputs.
+  const node = nodeById(graph, nodeId);
+  const ok = node?.kind === 'select'
+    ? dependencies.some(dep => dep.ready) && !dependencies.some(dep => dep.reason === 'waiting')
+    : dependencies.every(dep => dep.ready);
   return {
-    ok: dependencies.every(dep => dep.ready),
+    ok,
     dependencies,
-    missing: dependencies.filter(dep => !dep.ready),
+    missing: ok ? [] : dependencies.filter(dep => !dep.ready),
   };
 }
 
@@ -928,10 +995,82 @@ function makeNodeId(graph, prefix) {
   return `${prefix}${n}`;
 }
 
+// ---------- COMPARISON ----------
+// Every (provider, model) a capability can run on, for the compare picker.
+function comparisonOptions(capability) {
+  return providersFor(capability).flatMap(m => {
+    const models = providerCapability(m.id, capability)?.models || [];
+    return models.length
+      ? models.map(model => ({ provider: m.id, model, label: `${m.name} · ${modelLabel(m.id, model)}` }))
+      : [{ provider: m.id, model: undefined, label: m.name }];
+  });
+}
+
+// Duplicate a generator node once per variant ({ provider, model }), feed
+// the original and every copy into a new Pick node, and move the original's
+// downstream edges onto the Pick, so whatever the user picks flows on.
+// Returns { graph, pickId, variantIds, changes } or { error }.
+function buildComparison(graph, nodeId, variants) {
+  const original = nodeById(graph, nodeId);
+  if (!original || original.kind !== 'task') return { error: `"${nodeId}" is not a generator node` };
+  if (!Array.isArray(variants) || !variants.length) return { error: 'choose at least one provider / model to compare against' };
+  if (original.provider_params?._raw_args) return { error: 'reset this node to standard settings before comparing it' };
+  const options = comparisonOptions(original.capability);
+  const seen = new Set([`${original.provider}|${original.model || ''}`]);
+  const nodes = [...graph.nodes];
+  const edges = [...graph.edges];
+  const variantIds = [];
+  const changes = {};
+  const height = 210;
+  for (const variant of variants) {
+    const key = `${variant.provider}|${variant.model || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!options.some(o => o.provider === variant.provider && (o.model || '') === (variant.model || ''))) {
+      return { error: `${variant.provider}${variant.model ? ` / ${variant.model}` : ''} cannot run ${original.capability}` };
+    }
+    let { node: copy, changes: c1 } = switchTaskProvider(original, variant.provider);
+    let c2 = [];
+    if (variant.model && copy.model !== variant.model) ({ node: copy, changes: c2 } = switchTaskModel(copy, variant.model));
+    const id = makeNodeId({ nodes }, 'gen');
+    copy = { ...copy, id, x: original.x, y: (original.y || 0) + height * (variantIds.length + 1), thumbs: [] };
+    nodes.push(copy);
+    variantIds.push(id);
+    if (c1.length || c2.length) changes[id] = [...c1, ...c2];
+    // Same inputs as the original (ports match: same capability).
+    graph.edges.filter(e => e.to.node === original.id).forEach(e => edges.push({ ...e, to: { ...e.to, node: id } }));
+  }
+  if (!variantIds.length) return { error: 'every chosen variant is already on this node' };
+
+  const pickTemplate = NODE_TEMPLATES.find(t => t.kind === 'select');
+  const pickId = makeNodeId({ nodes }, 'sel');
+  const pick = {
+    ...pickTemplate.spawn(),
+    id: pickId,
+    title: `Compare · ${capabilityInfo(original.capability)?.title || original.capability}`,
+    x: (original.x || 0) + (original.w || 244) + 60,
+    y: original.y || 0,
+  };
+  nodes.push(pick);
+  const outPort = (original.ports || []).findIndex(p => p.side === 'right');
+  const pickIn = pick.ports.findIndex(p => p.side === 'left');
+  const pickOut = pick.ports.findIndex(p => p.side === 'right');
+  const downstream = edges.filter(e => e.from.node === original.id);
+  const kept = edges.filter(e => e.from.node !== original.id);
+  const rewired = downstream.map(e => ({ ...e, from: { node: pickId, port: pickOut } }));
+  const feeds = [original.id, ...variantIds].map(id => ({ from: { node: id, port: outPort }, to: { node: pickId, port: pickIn } }));
+  return {
+    graph: { ...graph, nodes, edges: [...kept, ...feeds, ...rewired] },
+    pickId,
+    variantIds,
+    changes,
+  };
+}
 
 Object.assign(window, {
   NODE_TEMPLATES, paletteTemplates, Storage, Executor,
   makeInitialState, appReducer,
+  comparisonOptions, buildComparison, settleInterruptedResults, paidRunSummary, needsPaidRunConfirmation, reportedSpend, DEFAULT_PAID_RUN_LIMIT,
   nodeById, nodeIdPrefix, nodeDisplayWidth, normalizeGraphPorts, topoOrder, downstreamNodeIds, defaultRunNodeIds, runOrderNodeIds, activeDepsForRun, canConnect, makeNodeId,
   // Thumb helpers — exported so editor.jsx can reuse without duplicating
   resultThumbs, sourceThumbs, upstreamThumbs, thumbHasUsableSource, usableResultThumbs,

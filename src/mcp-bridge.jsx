@@ -409,6 +409,26 @@ async function mcpSetParams(args, stateRef, dispatch) {
   };
 }
 
+async function mcpCompareNode(args, stateRef, dispatch) {
+  const found = await mcpFindNode(stateRef, args.node_id);
+  if (found.error) return { error: found.error };
+  const variants = (args.variants || []).map(v => ({ provider: v.provider, model: v.model }));
+  const result = buildComparison(found.proj.graph, args.node_id, variants);
+  if (result.error) {
+    const options = comparisonOptions(found.node.capability || '').map(o => `${o.provider}${o.model ? `/${o.model}` : ''}`);
+    return { error: `${result.error}${options.length ? ` — options: ${options.join(', ')}` : ''}` };
+  }
+  dispatch({ type: 'PATCH_GRAPH', fn: g => buildComparison(g, args.node_id, variants).graph || g });
+  await mcpFlush();
+  return {
+    ok: true,
+    pick_node_id: result.pickId,
+    variant_node_ids: result.variantIds,
+    ...(Object.keys(result.changes).length ? { adjusted_params: result.changes } : {}),
+    note: 'run_node on the pick node runs every variant, then pauses for the user to pick; each variant is a separate paid run',
+  };
+}
+
 async function mcpRunNode(args, stateRef) {
   const runner = window.AtlasRunner;
   if (!runner) return { error: 'canvas runner not ready — is a project open?' };
@@ -426,10 +446,17 @@ async function mcpRunNode(args, stateRef) {
     getResult: id => (proj.runResults || {})[id],
   });
   if (!order.length) return { error: 'nothing to run — the graph is empty' };
+  const state = stateRef.current;
+  const limit = 'paidRunLimit' in state.config ? state.config.paidRunLimit : DEFAULT_PAID_RUN_LIMIT;
+  const paid = paidRunSummary(proj.graph, order);
   runner.start(startId); // fire and forget; agent polls get_node_result
   return {
     ok: true,
     running: order,
+    paid_generations: paid.total,
+    ...(needsPaidRunConfirmation(paid, limit)
+      ? { needs_user_confirmation: true, note_confirmation: `above the user's limit of ${limit} paid generations — the run waits until they confirm in the Beatboard window` }
+      : {}),
     note: 'poll get_node_result on the node(s) you care about — generator nodes can take minutes',
   };
 }
@@ -439,6 +466,13 @@ async function mcpGetNodeResult(args, stateRef) {
   if (found.error) return { error: found.error };
   const runner = window.AtlasRunner;
 
+  if (runner?.state?.waitingForConfirm) {
+    return {
+      node_id: args.node_id,
+      state: 'waiting_for_confirmation',
+      note: 'the run submits more paid generations than the user allows without asking — they must confirm in the Beatboard window',
+    };
+  }
   const waiting = runner?.state?.waitingForPick;
   if (waiting && waiting.nodeId === args.node_id) {
     return {
@@ -461,7 +495,9 @@ async function mcpGetNodeResult(args, stateRef) {
     state,
     ...(state === 'running' ? { progress: Math.round((result.progress || 0) * 100) / 100 } : {}),
     ...(state === 'error' || state === 'blocked' ? { error: result.error, blocked_by: result.blockedBy } : {}),
+    ...(state === 'interrupted' ? { note: 'Beatboard quit while this ran; the user can Resume it from the Inspector to collect the result without re-running' } : {}),
     ...(state === 'done' ? { outputs: mcpThumbOutputs(result) } : {}),
+    ...(state === 'done' && result.cost ? { cost: result.cost } : {}),
     run_active: !!(runner && runner.state.active),
   };
 }
@@ -485,6 +521,7 @@ function useMcpBridge({ stateRef, dispatch }) {
       add_node: args => mcpAddNode(args, stateRef, dispatch),
       connect_nodes: args => mcpConnectNodes(args, stateRef, dispatch),
       set_params: args => mcpSetParams(args, stateRef, dispatch),
+      compare_node: args => mcpCompareNode(args, stateRef, dispatch),
       run_node: args => mcpRunNode(args, stateRef),
       get_node_result: args => mcpGetNodeResult(args, stateRef),
     };

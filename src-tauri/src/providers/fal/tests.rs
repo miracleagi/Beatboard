@@ -375,9 +375,12 @@ fn uploads_submits_polls_and_downloads() {
     let plan = flux_plan_with_local_image(&dir);
     let progress = Arc::new(Mutex::new(Vec::new()));
     let p2 = progress.clone();
-    let (raw, thumbs) = block_on(
-        test_client(&base).run(&plan, &dir.join("out"), move |p| p2.lock().unwrap().push(p)),
-    )
+    let (raw, thumbs) = block_on(test_client(&base).run(
+        &plan,
+        &dir.join("out"),
+        move |p| p2.lock().unwrap().push(p),
+        |_| {},
+    ))
     .unwrap();
 
     // Output: one image, downloaded into the run dir under the request id.
@@ -467,7 +470,7 @@ fn failed_generation_surfaces_fal_error_and_does_not_cancel() {
     );
     let dir = scratch("err");
     let plan = flux_plan_with_local_image(&dir);
-    let err = block_on(test_client(&base).run(&plan, &dir, |_| {})).unwrap_err();
+    let err = block_on(test_client(&base).run(&plan, &dir, |_| {}, |_| {})).unwrap_err();
     assert_eq!(
         err,
         "fal.ai error (HTTP 422): prompt: flagged by safety checker"
@@ -488,7 +491,7 @@ fn dropping_a_running_request_cancels_it_on_fal() {
     let plan = flux_plan_with_local_image(&dir);
     let client = test_client(&base);
     block_on(async {
-        let run = client.run(&plan, &dir, |_| {});
+        let run = client.run(&plan, &dir, |_| {}, |_| {});
         // Let it submit and poll a few times, then drop it (as Stop does).
         let _ = tokio::time::timeout(Duration::from_millis(300), run).await;
     });
@@ -583,5 +586,72 @@ fn inspector_preview_shows_endpoint_and_body() {
     assert!(
         lines.contains(&r#"aspect_ratio: "1:1""#.to_string()),
         "{lines:?}"
+    );
+}
+
+#[test]
+fn submitted_job_is_reported_and_can_be_resumed_by_a_new_client() {
+    let (base, seen) = mock_fal(
+        |base| {
+            (
+                200,
+                json!({ "images": [{ "url": format!("{base}/files/out.png") }] }),
+            )
+        },
+        false,
+    );
+    let dir = scratch("resume");
+    let plan = flux_plan_with_local_image(&dir);
+    // First "session": submit, record the job, then quit before waiting.
+    let job = block_on(test_client(&base).submit(&plan, |_| {})).unwrap();
+    assert_eq!(job.request_id, "req-1");
+    assert_eq!(job.output, "images");
+    let stored = serde_json::to_value(&job).unwrap();
+    // Second "session" (fresh client): resume from the stored job only.
+    let restored: Job = serde_json::from_value(stored).unwrap();
+    let (_, thumbs) =
+        block_on(test_client(&base).wait(&restored, &dir.join("out"), |_| {})).unwrap();
+    assert_eq!(
+        std::fs::read(thumbs[0].path.as_ref().unwrap()).unwrap(),
+        b"PNGDATA"
+    );
+    // Exactly one submission: resuming never re-submits (and never re-bills).
+    let submits = seen
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .filter(|r| r.0 == "POST" && r.1.starts_with("/fal-ai/"))
+        .count();
+    assert_eq!(submits, 1);
+}
+
+#[test]
+fn run_reports_the_job_before_waiting() {
+    let (base, _seen) = mock_fal(
+        |base| {
+            (
+                200,
+                json!({ "images": [{ "url": format!("{base}/files/out.png") }] }),
+            )
+        },
+        false,
+    );
+    let dir = scratch("report");
+    let plan = flux_plan_with_local_image(&dir);
+    let reported = Arc::new(Mutex::new(None));
+    let r2 = reported.clone();
+    block_on(test_client(&base).run(
+        &plan,
+        &dir.join("out"),
+        |_| {},
+        move |job| {
+            *r2.lock().unwrap() = Some(job.clone());
+        },
+    ))
+    .unwrap();
+    assert_eq!(
+        reported.lock().unwrap().as_ref().unwrap().request_id,
+        "req-1"
     );
 }

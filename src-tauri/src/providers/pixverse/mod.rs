@@ -59,7 +59,8 @@ impl Provider for PixVerseProvider {
             let (raw, thumbs) = exec(&ctx.app, &ctx.config, &args, |p| ctx.progress(p))
                 .await
                 .map_err(ProviderError::Remote)?;
-            Ok(TaskOutput { thumbs, raw })
+            let cost = reported_cost(&raw);
+            Ok(TaskOutput { thumbs, raw, cost })
         })
     }
 
@@ -130,16 +131,56 @@ pub async fn exec(
     Ok((parsed.unwrap_or(Value::Null), thumbs))
 }
 
+/// Credits the CLI reports having charged (`cost_credits` in its `--json`
+/// output, PixVerse CLI 1.2.10), wherever it sits in the response.
+pub fn reported_cost(parsed: &Value) -> Option<Value> {
+    fn find(v: &Value) -> Option<f64> {
+        match v {
+            Value::Object(map) => map
+                .get("cost_credits")
+                .and_then(|c| c.as_f64())
+                .or_else(|| map.values().find_map(find)),
+            Value::Array(items) => items.iter().find_map(find),
+            _ => None,
+        }
+    }
+    find(parsed).map(|amount| json!({ "amount": amount, "unit": "PixVerse credits" }))
+}
+
 /// Execute a legacy `kind: "cli"` PixVerse node.
 pub async fn run_legacy(node: Value, deps: Vec<Value>, ctx: RunCtx) -> Result<Value, String> {
     let args = legacy::resolve_pixverse_args(&node, &deps)?;
     let (parsed, thumbs) = exec(&ctx.app, &ctx.config, &args, |p| ctx.progress(p)).await?;
-    Ok(json!({
+    let mut result = json!({
         "ok": true,
         "pixverse": parsed,
         "thumbs": thumbs,
-    }))
+    });
+    if let Some(cost) = reported_cost(&parsed) {
+        result["cost"] = cost;
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
 mod golden;
+
+#[cfg(test)]
+mod cost_tests {
+    use super::reported_cost;
+    use serde_json::json;
+
+    #[test]
+    fn reads_cost_credits_anywhere_in_the_response() {
+        assert_eq!(
+            reported_cost(&json!({ "id": 1, "cost_credits": 30 })),
+            Some(json!({ "amount": 30.0, "unit": "PixVerse credits" }))
+        );
+        assert_eq!(
+            reported_cost(&json!({ "results": [{ "video_id": 9, "cost_credits": 12.5 }] }))
+                .unwrap()["amount"],
+            12.5
+        );
+        assert_eq!(reported_cost(&json!({ "id": 1 })), None);
+    }
+}

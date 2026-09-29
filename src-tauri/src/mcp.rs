@@ -17,7 +17,7 @@ const DEFAULT_PORT: u16 = 4923;
 const OP_TIMEOUT: Duration = Duration::from_secs(30);
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
-const TOOL_NAMES: [&str; 11] = [
+const TOOL_NAMES: [&str; 12] = [
     "describe_capabilities",
     "list_projects",
     "create_project",
@@ -27,6 +27,7 @@ const TOOL_NAMES: [&str; 11] = [
     "add_node",
     "connect_nodes",
     "set_params",
+    "compare_node",
     "run_node",
     "get_node_result",
 ];
@@ -206,6 +207,30 @@ fn tool_definitions() -> Value {
                     "params": params_schema
                 },
                 "required": ["node_id", "params"]
+            }
+        },
+        {
+            "name": "compare_node",
+            "description": "Compare a generator node across providers / models: adds one copy of the node per variant (same inputs, settings adjusted to what each model accepts), feeds the original and all copies into a new Pick node, and moves the original's downstream connections onto the Pick. Run the Pick node to run every variant; the run then pauses until the user picks. Each variant is a separate paid run.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "node_id": { "type": "string", "description": "Generator node to compare" },
+                    "variants": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "provider": { "type": "string" },
+                                "model": { "type": "string" }
+                            },
+                            "required": ["provider"]
+                        },
+                        "description": "Providers / models to compare against (see describe_capabilities)"
+                    }
+                },
+                "required": ["node_id", "variants"]
             }
         },
         {

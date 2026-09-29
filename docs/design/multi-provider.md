@@ -300,7 +300,7 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 | **P0 重构（✅ 已完成，见第 13 节）** | `providers/` 骨架、`Provider` trait；把 PixVerse 实现迁到 trait 之后；`inputs.rs` 和 `media.rs` 抽离；`kind:'task'` 与迁移函数；取消机制（`cancel_run`） | Stop 真正能中止任务；除此之外没有其他变化 | 黄金测试全部通过；现有 6 个 Rust 测试通过；3 个内置场景手动跑通 |
 | **P1 声明驱动（✅ 已完成，见第 14 节）** | manifest 与 `list_providers`；`<TaskInspector>` 取代各 PV Inspector；MCP 增加别名、`describe_capabilities` 和动态 schema；Config 面板改为 Providers 列表；删除 `config.apiKeys` 等遗留字段 | 调色板按能力分组；Inspector 统一样式 | `editor-panels.jsx` 净减少约 600 行以上；MCP 旧客户端调用全部兼容（加回归测试） |
 | **P2 第二个供应商（✅ 已完成，见第 15 节）** | Keychain 密钥存储；`jobs.rs`；fal 供应商（先做 `image.generate` 和 `video.generate`，再扩展）；本地文件上传；跨供应商使用媒体时的 ref 与上传回退 | 同一张图里可以混用 PixVerse 和 fal 节点 | 端到端测试：fal 生图 → PixVerse 图生视频 → ffmpeg 拼接 |
-| **P3 跨供应商能力** | "一键对比"（把一个节点复制到 N 个供应商或模型，结果汇入 Pick）；运行前成本估算与预算上限；任务 job_id 持久化，重启后可恢复轮询；ComfyUI 本地供应商 | 对比、成本、恢复 | — |
+| **P3 跨供应商能力（🟡 对比、花费控制、恢复已完成；ComfyUI 待定，见第 16 节）** | "一键对比"（把一个节点复制到 N 个供应商或模型，结果汇入 Pick）；运行前成本估算与预算上限；任务 job_id 持久化，重启后可恢复轮询；ComfyUI 本地供应商 | 对比、成本、恢复 | — |
 
 各阶段都能独立发布。P0 完成后不引入任何新依赖，只修复了中止问题，风险最低。
 
@@ -445,4 +445,56 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 - **只支持单次上传，最大 90 MB**，没有实现分片上传。
 - **进度是估算的。** fal 不返回百分比，进度条在排队时停在 10%，运行中逐渐逼近 85%，完成后跳到 100%。
 - **API key 在 macOS 钥匙串中的读写没有在 Mac 上验证过。** 这里只确认了相关代码能编译，测试走的是内存存储。
+
+## 16. P3 实施记录（第一部分）
+
+### 一键对比
+
+- **用法**：在 Inspector 的"Compare"区选择其他供应商或模型；AI agent 可以调用 MCP 工具 `compare_node`。
+- **生成的图**（`state.jsx` 中的 `buildComparison`，纯函数）：
+  - 为每个选中的组合复制一份节点，输入连线与原节点相同。
+  - 参数按目标模型自动调整，调整了哪些会列出来（沿用 P2 的 `reconcileTaskParams`）。
+  - 原节点和所有副本都连到一个新的 Pick 节点；原节点原来的下游连线改为从 Pick 引出，所以用户选中的结果会继续往下传。
+- **Pick 的等待规则改了**（`dependencyReadiness`）：
+  - 所有输入都不再运行中，并且至少一个产出了结果，Pick 就可以继续；只把成功的输入作为候选。
+  - 以前任何一个输入失败，Pick 就会被阻塞。对比时某个模型失败（例如被安全审核拦下）不应该拖住其他结果。失败的节点仍会出现在本次运行的错误汇总里。
+  - 这个改动适用于所有 Pick 节点。
+
+### 花费控制
+
+**实施时的发现**：
+- PixVerse CLI 的 `--json` 输出里有 `cost_credits`，但这是运行**之后**实际扣掉的积分，不是运行前的报价。
+- fal 的返回结果里没有任何费用信息，本机也访问不了 fal 的价格页面。
+
+因此没有做原方案里的"运行前成本估算"——没有可靠的价格数据，不编造数字。改为下面三件事：
+
+1. **记录实际花费**：从 PixVerse 输出中读取 `cost_credits`，写进运行结果的 `cost` 字段。Inspector 显示每个节点被扣的积分，空白 Inspector 汇总"reported spend"，MCP 的 `get_node_result` 也会返回。
+2. **按次数设上限**：运行前统计本次要提交的付费生成次数，按供应商分组，并列出节点数和输出数。超过用户设置的上限（默认 3，在 Config → Spending 修改；设为 0 表示每次都询问；也可以选"never ask"）时，先弹窗确认才开始运行。
+3. **MCP 行为**：`run_node` 的返回会带上 `paid_generations`；超过上限时额外返回 `needs_user_confirmation`。等待确认期间，`get_node_result` 返回 `waiting_for_confirmation`，agent 需要等用户在界面上确认。
+
+### 中断后恢复
+
+- **记录**：fal 一接受请求，Rust 就通过 `job:<run_id>` 事件把请求的 id 和 URL 发给前端，前端立即写进该节点的运行结果并保存到磁盘。
+  - 为此把 `FalClient::run` 拆成了 `submit` 和 `wait` 两步。
+  - 用户点 Stop 时会清掉这条记录——请求已经在 fal 取消了，没有东西可恢复。
+- **重启后**：加载项目时，保存时还在运行中且有记录的节点，会显示为 `interrupted`；只是在排队、还没提交的节点直接丢弃。
+- **恢复**：在 Inspector 点 Resume，调用 `resume_task` 继续轮询同一个 fal 请求并下载结果，不会重新提交，也就不会重复扣费。有测试专门确认只提交了一次。
+- **PixVerse 暂不支持恢复**：CLI 要等整个任务完成才会输出任务 id，运行中途拿不到可以保存的东西。以后要支持，需要改成先用 `--no-wait` 提交、再用 `task wait <id>` 等待。但这会改变我们执行 CLI 的方式，得有真实账号验证输出格式后才能动。
+
+### 测试
+
+- **Rust**：共 46 个。新增：从 PixVerse 输出中读取 `cost_credits`；fal 请求被接受后会先报告 job；用保存下来的 job 在一个全新的客户端里恢复，并确认只提交了一次。
+- **端到端**：从 31 项增加到 47 项，新增：
+  - 中断状态的加载和 Resume；
+  - `compare_node` 的连线和参数调整；
+  - 超过上限时弹窗确认、确认前不会发起任何运行；
+  - 对比中 Veo 失败时，Pick 仍用其余 2 个候选继续；
+  - PixVerse 积分的记录与汇总；
+  - 从 Inspector 发起对比。
+- **验证测试有效**：把 Pick 等待规则临时改回旧版后，端到端测试中有 2 项失败，证明这些检查确实在起作用。
+
+### 尚未做
+
+- **ComfyUI 本地供应商**：工作流怎么定义，需要先定下产品方案。
+- **运行前的价格估算**：理由见上文"花费控制"。
 
