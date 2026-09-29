@@ -293,7 +293,8 @@ function migrateLegacyPixVerseNode(node) {
 // Provider catalog
 // ════════════════════════════════════════════════════════════════════════════
 
-const PROVIDER_MANIFEST_FILES = ['pixverse'];
+// In palette order: a capability's first provider is the default for new nodes.
+const PROVIDER_MANIFEST_FILES = ['pixverse', 'fal'];
 let providerCatalog = { capabilities: {}, providers: [] };
 
 function setProviderCatalog(catalog) {
@@ -348,11 +349,21 @@ function providerCapability(provider, capability) {
 
 // Param specs with the manifest's shared `param_defs` merged under each
 // capability entry's overrides. Order is the manifest's display order.
-function taskParamSpecs(provider, capability) {
+// With a model, that model's `model_params` entry is applied last: an object
+// overrides fields (e.g. narrower options), null removes the param.
+// Mirrors catalog::param_specs in src-tauri/src/providers/catalog.rs.
+function taskParamSpecs(provider, capability, model) {
   const manifest = providerManifest(provider);
   const entry = manifest?.capabilities?.[capability];
   if (!entry) return [];
-  return (entry.params || []).map(p => ({ ...(manifest.param_defs?.[p.key] || {}), ...p }));
+  const overrides = (model && entry.model_params?.[model]) || {};
+  return (entry.params || [])
+    .filter(p => overrides[p.key] !== null)
+    .map(p => ({ ...(manifest.param_defs?.[p.key] || {}), ...p, ...(overrides[p.key] || {}) }));
+}
+
+function nodeParamSpecs(node) {
+  return taskParamSpecs(node.provider, node.capability, node.model);
 }
 
 function providerName(provider) {
@@ -378,7 +389,7 @@ function taskParamValue(node, spec) {
 const SUMMARY_KEYS = ['resolution', 'aspect_ratio', 'duration_s', 'count', 'template_id', 'language', 'speed', 'keyframe_time'];
 
 function taskSummaryFields(node) {
-  const specs = taskParamSpecs(node.provider, node.capability);
+  const specs = nodeParamSpecs(node);
   const fields = [];
   for (const key of SUMMARY_KEYS) {
     const spec = specs.find(s => s.key === key);
@@ -452,7 +463,7 @@ function setTaskParam(node, spec, value) {
   let next = { ...node, [spec.bucket]: bucket };
   if (value === true) {
     for (const other of spec.excludes || []) {
-      const otherSpec = taskParamSpecs(node.provider, node.capability).find(s => s.key === other);
+      const otherSpec = nodeParamSpecs(node).find(s => s.key === other);
       if (otherSpec) {
         const b = { ...(next[otherSpec.bucket] || {}) };
         delete b[other];
@@ -463,28 +474,49 @@ function setTaskParam(node, spec, value) {
   return withDecor(next);
 }
 
-function setTaskModel(node, model) {
-  const next = { ...node };
-  if (model) next.model = model; else delete next.model;
-  return withDecor(next);
+// Fit a node's params to what its provider + model accept: drop unsupported
+// keys, and move enum values outside the model's options to its default.
+// Returns the node and a list of human-readable changes.
+function reconcileTaskParams(node) {
+  const specs = nodeParamSpecs(node);
+  const changes = [];
+  const fit = (bucket) => {
+    const out = {};
+    for (const [key, value] of Object.entries(node[bucket] || {})) {
+      const spec = specs.find(s => s.key === key && s.bucket === bucket);
+      if (!spec || key.startsWith('_')) { changes.push(`${key} removed`); continue; }
+      if (spec.options && !spec.options.some(o => String(o) === String(value))) {
+        if (spec.default !== undefined) {
+          out[key] = spec.default;
+          changes.push(`${key} ${value} → ${spec.default}`);
+        } else {
+          changes.push(`${key} removed`);
+        }
+        continue;
+      }
+      out[key] = value;
+    }
+    return out;
+  };
+  const next = { ...node, params: fit('params'), provider_params: fit('provider_params') };
+  return { node: withDecor(next), changes };
 }
 
-// Move a node to another provider: keep params the target also accepts,
-// drop the rest (reported so the UI can say what changed).
+function switchTaskModel(node, model) {
+  const next = { ...node };
+  if (model) next.model = model; else delete next.model;
+  return reconcileTaskParams(next);
+}
+
+// Move a node to another provider (and that provider's model when the
+// current one isn't offered), keeping the params the target accepts.
 function switchTaskProvider(node, provider) {
   const target = providerCapability(provider, node.capability);
-  if (!target) return { node, dropped: [] };
-  const specs = taskParamSpecs(provider, node.capability);
-  const dropped = [];
-  const keep = (bucket) => Object.fromEntries(Object.entries(node[bucket] || {}).filter(([key]) => {
-    const ok = key.startsWith('_') ? false : specs.some(s => s.key === key && s.bucket === bucket);
-    if (!ok) dropped.push(key);
-    return ok;
-  }));
+  if (!target) return { node, changes: [] };
   const model = (target.models || []).includes(node.model) ? node.model : target.initial?.model;
-  const next = { ...node, provider, params: keep('params'), provider_params: keep('provider_params') };
+  const next = { ...node, provider };
   if (model) next.model = model; else delete next.model;
-  return { node: withDecor(next), dropped };
+  return reconcileTaskParams(next);
 }
 
 // Apply agent-supplied params (MCP add_node / set_params) to a task node.
@@ -503,23 +535,40 @@ function applyTaskParams(node, params) {
     next = switchTaskProvider(next, p.provider).node;
   }
   delete p.provider;
-  if (typeof p.model === 'string') next = setTaskModel(next, p.model);
+  if (typeof p.model === 'string') {
+    const entry = providerCapability(next.provider, next.capability);
+    if (providerManifest(next.provider)?.strict && !(entry.models || []).includes(p.model)) {
+      return { error: `${next.provider} has no model "${p.model}" for ${next.capability} — valid: ${(entry.models || []).join(', ')}` };
+    }
+    next = switchTaskModel(next, p.model).node;
+  }
   delete p.model;
-  const specs = taskParamSpecs(next.provider, next.capability);
+  const specs = nodeParamSpecs(next);
   for (const [rawKey, raw] of Object.entries(p)) {
     if (['title', 'prompt', 'path', 'selected_index'].includes(rawKey)) continue;
     const key = LEGACY_PARAM_NAMES[rawKey] || rawKey;
     const spec = specs.find(s => s.key === key);
     if (!spec) {
-      return { error: `"${rawKey}" is not a parameter of ${next.capability} on ${next.provider} — valid: ${specs.map(s => s.key).join(', ')} (see describe_capabilities)` };
+      const on = [next.provider, next.model].filter(Boolean).join(' / ');
+      return { error: `"${rawKey}" is not a parameter of ${next.capability} on ${on} — valid: ${specs.map(s => s.key).join(', ')} (see describe_capabilities)` };
     }
     let value = raw;
     if (spec.type === 'bool' || spec.type === 'tri') {
       if (typeof value !== 'boolean') return { error: `"${rawKey}" must be true or false` };
     } else if (value !== null && value !== undefined) {
-      const numeric = spec.type === 'int' || (spec.options || []).some(o => typeof o === 'number');
+      const numeric = spec.type === 'int' || spec.type === 'number' || (spec.options || []).some(o => typeof o === 'number');
       if (numeric && String(value).trim() !== '' && Number.isFinite(Number(value))) value = Number(value);
       else if (typeof value !== 'string' && typeof value !== 'number') return { error: `"${rawKey}" must be a string or number` };
+    }
+    if (providerManifest(next.provider)?.strict && value !== null && value !== undefined) {
+      // Strict providers (fal) reject anything the model doesn't list; say so
+      // now rather than when the node runs.
+      if (spec.options && !spec.options.some(o => String(o) === String(value))) {
+        return { error: `"${rawKey}" = ${value} is not supported by ${next.model || next.provider} — choose one of: ${spec.options.join(', ')}` };
+      }
+      if (typeof value === 'number' && ((spec.min != null && value < spec.min) || (spec.max != null && value > spec.max))) {
+        return { error: `"${rawKey}" = ${value} is out of range (${spec.min} – ${spec.max})` };
+      }
     }
     next = setTaskParam(next, spec, value);
   }
@@ -530,8 +579,8 @@ const TaskModel = {
   // catalog
   setProviderCatalog, loadProviderCatalog, providerCatalogList, capabilityIds, capabilityInfo, resolveCapability,
   providerManifest, providersFor, providerCapability, taskParamSpecs, providerName, modelLabel,
-  taskOutputKind, taskParamValue, taskSummaryFields, taskNodeDecor, taskPortsFor, spawnTaskNode,
-  setTaskParam, setTaskModel, switchTaskProvider, applyTaskParams,
+  nodeParamSpecs, taskOutputKind, taskParamValue, taskSummaryFields, taskNodeDecor, taskPortsFor, spawnTaskNode,
+  setTaskParam, reconcileTaskParams, switchTaskModel, switchTaskProvider, applyTaskParams,
   // migration
   PV_TASK_SPECS, isTaskNode, isLegacyPixVerseNode, migrateLegacyPixVerseNode,
 };

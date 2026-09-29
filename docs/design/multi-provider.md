@@ -299,7 +299,7 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 |---|---|---|---|
 | **P0 重构（✅ 已完成，见第 13 节）** | `providers/` 骨架、`Provider` trait；把 PixVerse 实现迁到 trait 之后；`inputs.rs` 和 `media.rs` 抽离；`kind:'task'` 与迁移函数；取消机制（`cancel_run`） | Stop 真正能中止任务；除此之外没有其他变化 | 黄金测试全部通过；现有 6 个 Rust 测试通过；3 个内置场景手动跑通 |
 | **P1 声明驱动（✅ 已完成，见第 14 节）** | manifest 与 `list_providers`；`<TaskInspector>` 取代各 PV Inspector；MCP 增加别名、`describe_capabilities` 和动态 schema；Config 面板改为 Providers 列表；删除 `config.apiKeys` 等遗留字段 | 调色板按能力分组；Inspector 统一样式 | `editor-panels.jsx` 净减少约 600 行以上；MCP 旧客户端调用全部兼容（加回归测试） |
-| **P2 第二个供应商（约 1–1.5 周）** | Keychain 密钥存储；`jobs.rs`；fal 供应商（先做 `image.generate` 和 `video.generate`，再扩展）；本地文件上传；跨供应商使用媒体时的 ref 与上传回退 | 同一张图里可以混用 PixVerse 和 fal 节点 | 端到端测试：fal 生图 → PixVerse 图生视频 → ffmpeg 拼接 |
+| **P2 第二个供应商（✅ 已完成，见第 15 节）** | Keychain 密钥存储；`jobs.rs`；fal 供应商（先做 `image.generate` 和 `video.generate`，再扩展）；本地文件上传；跨供应商使用媒体时的 ref 与上传回退 | 同一张图里可以混用 PixVerse 和 fal 节点 | 端到端测试：fal 生图 → PixVerse 图生视频 → ffmpeg 拼接 |
 | **P3 跨供应商能力** | "一键对比"（把一个节点复制到 N 个供应商或模型，结果汇入 Pick）；运行前成本估算与预算上限；任务 job_id 持久化，重启后可恢复轮询；ComfyUI 本地供应商 | 对比、成本、恢复 | — |
 
 各阶段都能独立发布。P0 完成后不引入任何新依赖，只修复了中止问题，风险最低。
@@ -385,4 +385,64 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 4. **"原样保留命令"的节点不能在 Inspector 里改参数。** 这类节点（`_raw_args`）会显示原始命令，并提供"Reset to standard settings"按钮；MCP 修改它们的参数时会报错并说明原因。
 5. **内置示例项目（`scenarios.jsx`）仍是旧格式。** 它们在加载时被迁移，正好一直覆盖迁移路径。
 6. **旧的非 PixVerse `gen` / `motion` 原型节点不再有参数面板。** 它们只能走模拟执行，也从没出现在调色板里。
+
+## 15. P2 实施记录
+
+### 协议依据
+
+实现时，本机网络策略屏蔽了 fal.ai 的文档站（`docs.fal.ai`、`fal.ai`）。因此协议细节取自 fal 官方 JS 客户端的源码：[fal-ai/fal-js](https://github.com/fal-ai/fal-js)，提交 `cf73f62`（2026-09-24）。各模型的输入输出字段，取自同一仓库里自动生成的 `libs/client/src/types/endpoints.ts`。
+
+| 用途 | 请求 |
+|---|---|
+| 提交任务 | `POST https://queue.fal.run/{endpoint}` → `{ request_id, status_url, response_url, cancel_url }` |
+| 查询状态 | `GET {status_url}` → `IN_QUEUE` / `IN_PROGRESS` / `COMPLETED`。注意：`COMPLETED` 也包括失败 |
+| 取结果 | `GET {response_url}` → 模型输出。失败时返回非 2xx 状态码，422 会带字段级的 `detail` |
+| 取消 | `PUT {cancel_url}` |
+| 上传 | `POST https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3` → `{ upload_url, file_url }`，再用 `PUT upload_url` 上传文件内容。超过 90 MB 的文件 fal 客户端改用分片上传，这里暂不支持，会直接报错说明 |
+| 鉴权 | 所有 fal 接口都带 `Authorization: Key <key>` |
+
+### 交付内容
+
+| 模块 | 文件 |
+|---|---|
+| fal 声明：6 个模型、参数、按模型的约束（`model_params`）；各模型的 endpoint（纯文本生成 / 带参考图两种）、字段映射和输出位置（`endpoints`） | `src/providers/fal.json` |
+| fal 供应商 | `src-tauri/src/providers/fal/mod.rs`，分为两部分：`plan()` 是纯函数，把节点设置转成 endpoint 和请求体；`FalClient` 负责上传、提交、轮询、取结果和下载 |
+| API key 存储：macOS 用钥匙串，其他平台用进程内存；前端只能查到"是否已设置" | `src-tauri/src/providers/secrets.rs`，命令 `provider_secret_status` / `set_provider_secret` / `clear_provider_secret` |
+| 按模型约束参数：`param_specs(…, model)`；`strict` 声明额外校验模型名、选项值和数值范围 | `src-tauri/src/providers/catalog.rs`、`src/task-model.jsx`（`nodeParamSpecs`、`reconcileTaskParams`） |
+| UI | `src/editor-panels.jsx`：Config 新增"Provider API keys"；Inspector 显示缺 key 提示；切换模型或供应商时，会自动调整不再适用的参数，并逐项提示改了什么 |
+
+首批模型（全部来自 fal-js 的生成类型）：
+
+- **图像**：FLUX.1 [dev]（纯文本生成 / 以图生图）、FLUX.1 [schnell]（只支持纯文本）、Nano Banana（纯文本生成 / 可接多张参考图的编辑模式）。
+- **视频**：Kling 2.5 Turbo Pro、Veo 3.1 Fast、Hailuo-02 Standard，都分文生视频和图生视频两种。
+
+### 与原方案的差异
+
+1. **没有单独的 `jobs.rs`。** 目前只有 fal 一个供应商用队列，轮询逻辑写在 `FalClient::run` 里。等出现第二个异步供应商时再抽出通用部分。
+2. **取消会同时通知 fal。** 路由层丢弃运行任务的同时，`CancelOnDrop` 会发送 `PUT cancel_url`。已经完成或已经失败的任务不会再发取消请求。
+3. **fal 的输出不写入 `Thumb.id`。** 旧数据把 `id` 一律当作 PixVerse 的云端 ID，写进去会被误用。fal 的结果下载到 `runs/fal/{request_id}-{i}.{ext}`；下游节点（包括 PixVerse）读取这个本地文件。
+4. **fal 采用严格校验，PixVerse 仍然宽松。** fal 服务端本来就会拒绝列表外的值，所以前端和 Rust 端都提前拦截，并给出可选值。PixVerse 的旧项目里有手写的值，保持 P1 的宽松策略。
+5. **节点上不做运行前拦截。** 缺 key 时，Inspector 会提示；运行时 Rust 端返回"去 Config 添加 key"的错误。
+
+### 测试
+
+- **Rust**：共 43 个测试，其中 fal 相关 15 个。
+  - 声明检查：每个模型的每个参数都有字段映射；各能力的初始值合法。
+  - 各模型的 endpoint 选择和字段转换，例如 Kling 的时长是 `"10"`，Veo 是 `"6s"`；以及"只在纯文本生成 / 只在图生视频时生效"的字段。
+  - 严格校验、错误信息的可读性、输出解析。
+  - 用 `tiny_http` 模拟 fal 服务端，跑通完整协议：上传 → 提交 → 3 次轮询 → 取结果 → 下载。同时检查 Authorization 头、请求体、进度只增不减；失败任务返回可读错误且不会被取消；运行中被丢弃时会发送取消请求（已验证：去掉取消逻辑后这个测试会失败）。
+  - 跨供应商：fal 生成的图作为 PixVerse 图生视频的 `--image`；PixVerse 的输出作为 fal 输入时走本地文件上传，不使用 PixVerse 的云端 ID。
+- **端到端**：`scripts/e2e/ui-mcp-smoke.mjs` 从 20 项增加到 31 项，新增：
+  - 把节点切换到 fal，保留仍然适用的参数并提示调整了哪些；
+  - 缺 key 提示 → 在 Config 保存 key → 提示消失；
+  - 切换到 Veo 时，时长 5 自动调整为 8；
+  - MCP 调用 fal 时的严格校验。
+  - 设置 `SCREENSHOT_DIR` 环境变量可以同时保存截图。
+
+### 未验证 / 已知限制
+
+- **没有用真实的 fal 账号跑过。** 本机访问不了 fal，也没有 key。协议和模型字段依据的是官方客户端源码，完整流程只在模拟服务端上验证过。首次在 Mac 上真实运行时，请留意 422 错误里的字段名。
+- **只支持单次上传，最大 90 MB**，没有实现分片上传。
+- **进度是估算的。** fal 不返回百分比，进度条在排队时停在 10%，运行中逐渐逼近 85%，完成后跳到 100%。
+- **API key 在 macOS 钥匙串中的读写没有在 Mac 上验证过。** 这里只确认了相关代码能编译，测试走的是内存存储。
 

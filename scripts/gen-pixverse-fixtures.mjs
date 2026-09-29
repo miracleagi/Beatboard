@@ -30,7 +30,7 @@ for (const file of ['src/scenarios.jsx', 'src/state.jsx', 'src/task-model.jsx'])
 const readJson = file => JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
 context.setProviderCatalog({
   capabilities: readJson('src/providers/capabilities.json'),
-  providers: [readJson('src/providers/pixverse.json')],
+  providers: [readJson('src/providers/pixverse.json'), readJson('src/providers/fal.json')],
 });
 const { SCENARIOS, normalizeGraphPorts, migrateLegacyPixVerseNode, isLegacyPixVerseNode, spawnTaskNode } = context;
 const plain = value => JSON.parse(JSON.stringify(value));

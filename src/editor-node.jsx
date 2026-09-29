@@ -3,11 +3,11 @@
 // content is normally read-only, so users can rewrite prompts and CLI
 // commands directly.
 
-function EditableText({ value, onChange, placeholder, style, mono, mult, minRows = 1, maxRows }) {
+function EditableText({ value, onChange, placeholder, style, mono, mult, minRows = 1, maxRows, charsPerRow = 28 }) {
   if (mult) {
     const text = value || '';
     const lines = text.split('\n');
-    const wrapRows = lines.reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / 28)), 0);
+    const wrapRows = lines.reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / charsPerRow)), 0);
     const rows = Math.max(minRows, Math.min(maxRows || wrapRows, wrapRows));
     return (
       <textarea
@@ -963,6 +963,7 @@ function EditorNode({
           mult
           minRows={1}
           maxRows={3}
+          charsPerRow={20}
           style={{ color: t.text, fontSize: 11.5, fontWeight: 600, flex: '1 1 120px', minWidth: 0, resize: 'none', lineHeight: 1.25 }}
         />
         {node.badge && (

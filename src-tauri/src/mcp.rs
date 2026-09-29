@@ -38,8 +38,10 @@ delete_project manage them. Typical graph flow: get_graph to orient → describe
 see generator types, their input ports, models and params → add_node for inputs (prompt, asset) \
 and generators (image.generate, video.generate, video.transition, …) → connect_nodes to wire \
 inputs into generator ports → run_node → poll get_node_result until 'done', \
-then use the returned local file paths. Generation runs on a cloud provider (PixVerse) \
-and takes 1–5 minutes per node; ffmpeg_compose concatenates videos locally. \
+then use the returned local file paths. Generation runs on a cloud provider — PixVerse, or \
+fal.ai (set params.provider = \"fal\"; the user must have saved a fal.ai API key in Config, \
+and each run is billed to their fal account) — and takes 1–5 minutes per node; \
+ffmpeg_compose concatenates videos locally. \
 The user can also edit and run the canvas themselves at any time.";
 
 // ─── Pending-op registry (HTTP thread ⇄ frontend round trip) ─────────────────

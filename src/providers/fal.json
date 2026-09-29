@@ -1,0 +1,181 @@
+{
+  "id": "fal",
+  "name": "fal.ai",
+  "auth": "api-key",
+  "strict": true,
+  "key_hint": "fal.ai API key (fal.ai/dashboard/keys) — billed per run to your fal account",
+  "models": {
+    "flux-dev": "FLUX.1 [dev]",
+    "flux-schnell": "FLUX.1 [schnell]",
+    "nano-banana": "Nano Banana",
+    "kling-2.5-turbo-pro": "Kling 2.5 Turbo Pro",
+    "veo-3.1-fast": "Veo 3.1 Fast",
+    "hailuo-02-standard": "Hailuo-02 Standard"
+  },
+  "param_defs": {
+    "aspect_ratio": { "bucket": "params", "label": "Aspect ratio", "type": "enum", "section": "Aspect ratio" },
+    "duration_s": { "bucket": "params", "label": "Duration", "type": "enum", "unit": "s", "section": "Duration" },
+    "resolution": { "bucket": "params", "label": "Resolution", "type": "enum", "section": "Resolution" },
+    "count": { "bucket": "params", "label": "count", "type": "int", "min": 1, "max": 4, "default": 1, "section": "Generation" },
+    "seed": { "bucket": "params", "label": "seed", "type": "int", "section": "Generation" },
+    "audio": { "bucket": "params", "label": "audio", "type": "tri", "labels": ["audio", "no-audio"], "section": "Flags" },
+    "negative_prompt": { "bucket": "provider_params", "label": "negative prompt", "type": "string", "section": "Generation" },
+    "num_inference_steps": { "bucket": "provider_params", "label": "steps", "type": "int", "min": 1, "max": 50, "section": "Advanced" },
+    "guidance_scale": { "bucket": "provider_params", "label": "guidance", "type": "number", "min": 1, "max": 20, "section": "Advanced" },
+    "strength": { "bucket": "provider_params", "label": "strength (img2img)", "type": "number", "min": 0.01, "max": 1, "section": "Advanced" },
+    "cfg_scale": { "bucket": "provider_params", "label": "cfg scale", "type": "number", "min": 0, "max": 1, "section": "Advanced" },
+    "output_format": { "bucket": "provider_params", "label": "Output format", "type": "enum", "section": "Advanced" },
+    "prompt_optimizer": { "bucket": "provider_params", "label": "prompt optimizer", "type": "tri", "labels": ["optimize prompt", "raw prompt"], "section": "Flags" }
+  },
+  "capabilities": {
+    "image.generate": {
+      "models": ["flux-dev", "flux-schnell", "nano-banana"],
+      "initial": {
+        "model": "flux-dev",
+        "params": { "aspect_ratio": "16:9", "count": 1 },
+        "provider_params": {}
+      },
+      "help": "Runs on fal.ai and is billed per image to your fal account. FLUX.1 [dev] and Nano Banana use connected images as references (Nano Banana takes several); FLUX.1 [schnell] is text-only.",
+      "params": [
+        { "key": "aspect_ratio", "options": ["1:1", "4:3", "3:4", "16:9", "9:16"], "default": "16:9" },
+        { "key": "count" },
+        { "key": "seed" },
+        { "key": "num_inference_steps" },
+        { "key": "guidance_scale" },
+        { "key": "strength" },
+        { "key": "output_format", "options": ["jpeg", "png"], "default": "jpeg" }
+      ],
+      "model_params": {
+        "flux-schnell": { "strength": null },
+        "nano-banana": {
+          "aspect_ratio": { "options": ["auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"] },
+          "num_inference_steps": null,
+          "guidance_scale": null,
+          "strength": null,
+          "output_format": { "options": ["jpeg", "png", "webp"], "default": "png" }
+        }
+      }
+    },
+    "video.generate": {
+      "models": ["kling-2.5-turbo-pro", "veo-3.1-fast", "hailuo-02-standard"],
+      "initial": {
+        "model": "kling-2.5-turbo-pro",
+        "params": { "duration_s": 5, "aspect_ratio": "16:9" },
+        "provider_params": {}
+      },
+      "help": "Runs on fal.ai and is billed per video to your fal account. Text to video, or image to video when a source image is connected (the aspect ratio then follows the image for Kling).",
+      "params": [
+        { "key": "aspect_ratio", "options": ["16:9", "9:16", "1:1"], "default": "16:9" },
+        { "key": "duration_s", "options": [4, 5, 6, 8, 10], "default": 5 },
+        { "key": "resolution", "options": ["720p", "1080p", "4k"], "default": "720p" },
+        { "key": "seed" },
+        { "key": "negative_prompt" },
+        { "key": "audio" },
+        { "key": "prompt_optimizer" },
+        { "key": "cfg_scale" }
+      ],
+      "model_params": {
+        "kling-2.5-turbo-pro": {
+          "duration_s": { "options": [5, 10], "default": 5 },
+          "resolution": null,
+          "seed": null,
+          "audio": null,
+          "prompt_optimizer": null
+        },
+        "veo-3.1-fast": {
+          "aspect_ratio": { "options": ["16:9", "9:16"] },
+          "duration_s": { "options": [4, 6, 8], "default": 8 },
+          "cfg_scale": null,
+          "prompt_optimizer": null
+        },
+        "hailuo-02-standard": {
+          "aspect_ratio": null,
+          "duration_s": { "options": [6, 10], "default": 6 },
+          "resolution": { "label": "Resolution (image to video)", "options": ["512P", "768P"], "default": "768P" },
+          "seed": null,
+          "negative_prompt": null,
+          "audio": null,
+          "cfg_scale": null
+        }
+      }
+    }
+  },
+  "endpoints": {
+    "flux-dev": {
+      "text": "fal-ai/flux/dev",
+      "image": "fal-ai/flux/dev/image-to-image",
+      "image_field": "image_url",
+      "output": "images",
+      "fields": {
+        "aspect_ratio": { "to": "image_size", "only": "text", "map": { "1:1": "square_hd", "4:3": "landscape_4_3", "3:4": "portrait_4_3", "16:9": "landscape_16_9", "9:16": "portrait_16_9" } },
+        "count": { "to": "num_images" },
+        "seed": { "to": "seed" },
+        "num_inference_steps": { "to": "num_inference_steps" },
+        "guidance_scale": { "to": "guidance_scale" },
+        "strength": { "to": "strength", "only": "image" },
+        "output_format": { "to": "output_format" }
+      }
+    },
+    "flux-schnell": {
+      "text": "fal-ai/flux/schnell",
+      "output": "images",
+      "fields": {
+        "aspect_ratio": { "to": "image_size", "map": { "1:1": "square_hd", "4:3": "landscape_4_3", "3:4": "portrait_4_3", "16:9": "landscape_16_9", "9:16": "portrait_16_9" } },
+        "count": { "to": "num_images" },
+        "seed": { "to": "seed" },
+        "num_inference_steps": { "to": "num_inference_steps" },
+        "guidance_scale": { "to": "guidance_scale" },
+        "output_format": { "to": "output_format" }
+      }
+    },
+    "nano-banana": {
+      "text": "fal-ai/nano-banana",
+      "image": "fal-ai/nano-banana/edit",
+      "image_field": "image_urls",
+      "output": "images",
+      "fields": {
+        "aspect_ratio": { "to": "aspect_ratio" },
+        "count": { "to": "num_images" },
+        "seed": { "to": "seed" },
+        "output_format": { "to": "output_format" }
+      }
+    },
+    "kling-2.5-turbo-pro": {
+      "text": "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
+      "image": "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
+      "image_field": "image_url",
+      "output": "video",
+      "fields": {
+        "duration_s": { "to": "duration", "format": "{}" },
+        "aspect_ratio": { "to": "aspect_ratio", "only": "text" },
+        "negative_prompt": { "to": "negative_prompt" },
+        "cfg_scale": { "to": "cfg_scale" }
+      }
+    },
+    "veo-3.1-fast": {
+      "text": "fal-ai/veo3.1/fast",
+      "image": "fal-ai/veo3.1/fast/image-to-video",
+      "image_field": "image_url",
+      "output": "video",
+      "fields": {
+        "duration_s": { "to": "duration", "format": "{}s" },
+        "aspect_ratio": { "to": "aspect_ratio" },
+        "resolution": { "to": "resolution" },
+        "audio": { "to": "generate_audio" },
+        "seed": { "to": "seed" },
+        "negative_prompt": { "to": "negative_prompt" }
+      }
+    },
+    "hailuo-02-standard": {
+      "text": "fal-ai/minimax/hailuo-02/standard/text-to-video",
+      "image": "fal-ai/minimax/hailuo-02/standard/image-to-video",
+      "image_field": "image_url",
+      "output": "video",
+      "fields": {
+        "duration_s": { "to": "duration", "format": "{}" },
+        "resolution": { "to": "resolution", "only": "image" },
+        "prompt_optimizer": { "to": "prompt_optimizer" }
+      }
+    }
+  }
+}

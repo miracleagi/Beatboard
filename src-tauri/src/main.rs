@@ -248,7 +248,7 @@ fn parse_byte_range(header: &str, len: u64) -> Option<(u64, u64)> {
     Some((start, end))
 }
 
-fn media_mime(path: &std::path::Path) -> &'static str {
+pub(crate) fn media_mime(path: &std::path::Path) -> &'static str {
     match path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -286,6 +286,9 @@ fn main() {
             run_node,
             cancel_run,
             preview_task,
+            providers::secrets::provider_secret_status,
+            providers::secrets::set_provider_secret,
+            providers::secrets::clear_provider_secret,
             copy_to_downloads,
             mcp::mcp_response,
             runtime::runtime_status,

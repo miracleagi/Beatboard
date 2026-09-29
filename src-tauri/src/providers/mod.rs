@@ -7,8 +7,10 @@
 
 pub mod cancel;
 pub mod catalog;
+pub mod fal;
 pub mod inputs;
 pub mod pixverse;
+pub mod secrets;
 
 use crate::thumbs::Thumb;
 use serde_json::{Map, Value};
@@ -101,10 +103,12 @@ pub trait Provider: Send + Sync {
 }
 
 static PIXVERSE: pixverse::PixVerseProvider = pixverse::PixVerseProvider;
+static FAL: fal::FalProvider = fal::FalProvider;
 
 pub fn provider(id: &str) -> Option<&'static dyn Provider> {
     match id {
         "pixverse" => Some(&PIXVERSE),
+        "fal" => Some(&FAL),
         _ => None,
     }
 }

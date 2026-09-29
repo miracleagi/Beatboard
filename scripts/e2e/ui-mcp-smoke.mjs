@@ -6,8 +6,12 @@
 // in config), then checks that the project is migrated to task nodes, that the
 // Inspector and palette work, and that MCP calls from older agents (short type
 // names such as `video`, old param names such as `quality`) keep working.
+// It also covers fal.ai: switching a node's provider and model, the API-key
+// flow in Config, and MCP validation against per-model constraints.
 //
 //   node scripts/e2e/ui-mcp-smoke.mjs
+//
+// Set SCREENSHOT_DIR to also save screenshots of key screens.
 //
 // Needs Playwright with a Chromium build. Set PLAYWRIGHT_MODULE to the
 // Playwright entry point when it is not resolvable from this repo, e.g. a
@@ -26,7 +30,7 @@ const { chromium } = await import(pw ? pathToFileURL(pw).href : 'playwright');
 // Stand-in for window.__TAURI__: answers the commands the UI calls, records
 // saves, and lets the test deliver MCP ops through the bridge's listener.
 const TAURI_STUB = `
-window.__saved = []; window.__mcp = {}; window.__listeners = {};
+window.__saved = []; window.__mcp = {}; window.__listeners = {}; window.__keys = {};
 const LEGACY = fetch('legacy-state.json').then(r => r.json());
 window.__TAURI__ = {
   tauri: {
@@ -37,6 +41,9 @@ window.__TAURI__ = {
       if (cmd === 'runtime_status') return { pixverse: { available: true, source: 'managed', version: '1.2.10' }, ffmpeg: { available: true, source: 'bundled', version: '8.1' } };
       if (cmd === 'preview_task') return ['pixverse', 'create', args.node.capability, '--json'];
       if (cmd === 'mcp_response') { window.__mcp[args.id] = args.result; return null; }
+      if (cmd === 'provider_secret_status') return !!window.__keys[args.provider];
+      if (cmd === 'set_provider_secret') { window.__keys[args.provider] = args.secret; return null; }
+      if (cmd === 'clear_provider_secret') { delete window.__keys[args.provider]; return null; }
       return null;
     },
   },
@@ -113,6 +120,9 @@ await page.waitForTimeout(1000);
 
 const results = {};
 const check = (name, ok, detail) => { results[name] = ok ? 'PASS' : `FAIL ${JSON.stringify(detail)}`; };
+const shot = async (name) => {
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `${name}.png`) });
+};
 const mcp = (tool, args = {}) => page.evaluate(([t, a]) => window.__mcpCall(t, a), [tool, args]);
 // Click an element with exactly this text inside the right-hand Inspector.
 const inspectorClick = async (text) => {
@@ -141,7 +151,7 @@ const add = await mcp('add_node', { type: 'video', params: { quality: '1080p', d
 check('mcp add_node alias + legacy params', add.ok && add.type === 'video.generate' && add.params.resolution === '1080p' && add.params.duration_s === 8 && add.params.audio === false && add.model === 'kling-3.0-pro' && add.inputs.join() === 'src,prompt', add);
 const bad = await mcp('set_params', { node_id: add.node_id, params: { template_id: '1' } });
 check('mcp rejects unknown param', !!bad.error && bad.error.includes('template_id'), bad);
-const badProvider = await mcp('add_node', { type: 'image.generate', params: { provider: 'fal' } });
+const badProvider = await mcp('add_node', { type: 'image.generate', params: { provider: 'replicate' } });
 check('mcp rejects unknown provider', !!badProvider.error, badProvider);
 const badType = await mcp('add_node', { type: 'hologram' });
 check('mcp unknown type lists valid', !!badType.error && badType.error.includes('video.transition'), badType);
@@ -182,7 +192,52 @@ await page.waitForTimeout(300);
 const r1b = (await mcp('get_graph')).nodes.find(n => n.id === 'r1');
 check('raw node reset', !r1b.params._raw_args && r1b.params.resolution === '1080p', r1b);
 
-// 6. Clicking a palette entry adds a task node.
+// 7. Switch the migrated video node to fal.ai.
+await page.click('[data-node-id="v1"]', { position: { x: 60, y: 12 } });
+await page.waitForTimeout(300);
+const providerSelect = page.locator('select').filter({ has: page.locator('option[value="fal"]') }).first();
+await providerSelect.selectOption('fal');
+await page.waitForTimeout(400);
+let v1c = (await mcp('get_graph')).nodes.find(n => n.id === 'v1');
+let text = await page.evaluate(() => document.body.innerText);
+check('switch to fal keeps what fits', v1c.provider === 'fal' && v1c.model === 'kling-2.5-turbo-pro' && v1c.params.duration_s === 5 && v1c.params.aspect_ratio === '9:16' && v1c.params.seed === undefined && v1c.params.timeout === undefined, v1c);
+check('switch notice lists adjustments', /Adjusted for fal\.ai: .*seed removed/.test(text), null);
+check('missing key warning', text.includes('No fal.ai API key'), null);
+
+// 8. Save a key in Config; the warning clears.
+await page.getByText('add it in Config').click();
+await page.waitForTimeout(300);
+await page.locator('input[type="password"]').first().fill('fal-test-key');
+await page.getByText('Save', { exact: true }).click();
+await page.waitForTimeout(300);
+await shot('config-provider-keys');
+text = await page.evaluate(() => document.body.innerText);
+check('key saved via Keychain command', (await page.evaluate(() => window.__keys.fal)) === 'fal-test-key' && text.includes('KEY SET'), null);
+await page.getByText('Done', { exact: true }).click();
+await page.waitForTimeout(300);
+text = await page.evaluate(() => document.body.innerText);
+check('warning cleared after save', !text.includes('No fal.ai API key'), null);
+
+// 9. Model switch clamps values the new model doesn't offer.
+await inspectorClick('veo-3.1-fast');
+await page.waitForTimeout(300);
+await shot('inspector-fal-veo');
+v1c = (await mcp('get_graph')).nodes.find(n => n.id === 'v1');
+text = await page.evaluate(() => document.body.innerText);
+check('veo clamps duration to its default', v1c.model === 'veo-3.1-fast' && v1c.params.duration_s === 8 && text.includes('duration_s 5 → 8'), v1c.params);
+check('model-specific options shown', text.includes('RESOLUTION') && !text.includes('CFG SCALE'), null);
+
+// 10. MCP against fal: provider switch, strict validation.
+const falImg = await mcp('add_node', { type: 'image.generate', params: { provider: 'fal', model: 'nano-banana', aspect_ratio: '21:9', count: 2 } });
+check('mcp adds fal node', falImg.ok && falImg.provider === 'fal' && falImg.model === 'nano-banana' && falImg.params.aspect_ratio === '21:9' && falImg.params.count === 2, falImg);
+const badDur = await mcp('set_params', { node_id: 'v1', params: { duration_s: 5 } });
+check('mcp strict option check', !!badDur.error && badDur.error.includes('4, 6, 8'), badDur);
+const badModel = await mcp('set_params', { node_id: 'v1', params: { model: 'sora-9' } });
+check('mcp strict model check', !!badModel.error && badModel.error.includes('veo-3.1-fast'), badModel);
+const unsupported = await mcp('set_params', { node_id: falImg.node_id, params: { guidance_scale: 3 } });
+check('mcp per-model param check', !!unsupported.error && unsupported.error.includes('nano-banana'), unsupported);
+
+// 11. Clicking a palette entry adds a task node (last: it may land on top of other nodes).
 const before = (await mcp('get_graph')).nodes.length;
 await page.getByText('Upscale video', { exact: true }).first().click();
 await page.waitForTimeout(400);

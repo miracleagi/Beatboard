@@ -50,8 +50,10 @@ Beatboard 会自行管理所有运行依赖：ffmpeg 已内置，PixVerse CLI �
 | **Asset** | 图片 / 视频 / 音频素材（支持从本地磁盘选择，或从 Library 中选取） |
 
 ### 生成节点
-每个生成节点都在 Inspector 中选择供应商和模型；目前所有节点类型都由 PixVerse 执行。
-各节点可用的参数来自 `src/providers/pixverse.json`。
+每个生成节点都在 Inspector 中选择供应商和模型。所有节点类型都可以用 PixVerse 执行；
+**Generate image** 和 **Generate video** 还可以用 [fal.ai](https://fal.ai)（FLUX、Nano Banana、Kling、Veo、Hailuo）——
+在 **⚙ Config → Provider API keys** 中填入 fal.ai API key（保存在 macOS 钥匙串中；运行费用计入你的 fal 账户）。
+各节点可用的参数来自 `src/providers/pixverse.json` 和 `src/providers/fal.json`。
 
 | 节点 | 类型（MCP） | 说明 |
 |------|------------|------|
@@ -156,6 +158,8 @@ src-tauri/                   ← Rust 后端
   src/runtime.rs             ← 内置 ffmpeg + Beatboard 私有 PixVerse 运行时管理
   src/providers/             ← Provider 接口、输入解析、取消、目录校验
   src/providers/pixverse/    ← PixVerse 供应商：task → CLI 参数、执行、旧格式节点
+  src/providers/fal/         ← fal.ai 供应商：队列接口、上传、下载
+  src/providers/secrets.rs   ← 供应商 API key（macOS 钥匙串）
   src/ffmpeg.rs              ← ffmpeg 节点执行
   src/thumbs.rs              ← 运行结果解析与缩略图下载
   src/storage.rs             ← 项目文件持久化

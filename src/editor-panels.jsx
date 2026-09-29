@@ -1286,9 +1286,10 @@ function ParamInput({ t, spec, value, onCommit }) {
   const commit = () => {
     const raw = draft.trim();
     if (raw === '') { if (shown !== '') onCommit(undefined); return; }
-    if (spec.type === 'int') {
+    if (spec.type === 'int' || spec.type === 'number') {
       const n = Number(raw);
-      if (!Number.isInteger(n) || (spec.min != null && n < spec.min) || (spec.max != null && n > spec.max)) {
+      const wrongKind = spec.type === 'int' ? !Number.isInteger(n) : !Number.isFinite(n);
+      if (wrongKind || (spec.min != null && n < spec.min) || (spec.max != null && n > spec.max)) {
         setDraft(shown);
         return;
       }
@@ -1304,7 +1305,7 @@ function ParamInput({ t, spec, value, onCommit }) {
       <input
         value={draft}
         placeholder={placeholder}
-        inputMode={spec.type === 'int' ? 'numeric' : undefined}
+        inputMode={spec.type === 'int' ? 'numeric' : spec.type === 'number' ? 'decimal' : undefined}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
@@ -1317,7 +1318,7 @@ function ParamInput({ t, spec, value, onCommit }) {
 
 function TaskParamSection({ t, node, name, specs, onSet }) {
   const enums = specs.filter(s => s.type === 'enum');
-  const fields = specs.filter(s => s.type === 'int' || s.type === 'string');
+  const fields = specs.filter(s => s.type === 'int' || s.type === 'number' || s.type === 'string');
   const toggles = specs.filter(s => s.type === 'bool' || s.type === 'tri');
   return (<>
     {enums.map(spec => {
@@ -1413,11 +1414,97 @@ function TaskCommandPreview({ t, node }) {
   );
 }
 
+// Whether an API-key provider has a key stored: true / false, or null when it
+// doesn't use keys (or outside the desktop app). Refreshes when Config saves.
+const PROVIDER_KEYS_EVENT = 'beatboard:provider-keys';
+
+function useProviderKeyStatus(provider) {
+  const [status, setStatus] = React.useState(null);
+  React.useEffect(() => {
+    const usesKey = providerManifest(provider)?.auth === 'api-key';
+    if (!usesKey || !window.__TAURI__) { setStatus(null); return undefined; }
+    let live = true;
+    const refresh = () => window.__TAURI__.tauri.invoke('provider_secret_status', { provider })
+      .then(v => { if (live) setStatus(!!v); })
+      .catch(() => { if (live) setStatus(null); });
+    refresh();
+    window.addEventListener(PROVIDER_KEYS_EVENT, refresh);
+    return () => { live = false; window.removeEventListener(PROVIDER_KEYS_EVENT, refresh); };
+  }, [provider]);
+  return status;
+}
+
+// Config: API keys for providers that need one. Keys go straight to the
+// macOS Keychain via Rust; the UI only ever learns whether one is set.
+function ProviderKeyRow({ t, manifest }) {
+  const status = useProviderKeyStatus(manifest.id);
+  const [draft, setDraft] = React.useState('');
+  const [message, setMessage] = React.useState('');
+  const call = async (cmd, args, done) => {
+    try {
+      await window.__TAURI__.tauri.invoke(cmd, { provider: manifest.id, ...args });
+      setDraft('');
+      setMessage(done);
+      window.dispatchEvent(new Event(PROVIDER_KEYS_EVENT));
+    } catch (e) {
+      setMessage(String(e));
+    }
+  };
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: status ? t.green : t.amber }}/>
+        <span style={{ color: t.text, fontSize: 12, fontWeight: 500, flex: 1 }}>{manifest.name}</span>
+        <Pill color={status ? t.green : t.amber} bg={status ? t.greenBg : t.amberBg}>{status ? 'KEY SET' : 'NO KEY'}</Pill>
+      </div>
+      {manifest.key_hint && (
+        <div style={{ marginTop: 3, color: t.textMute, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.45 }}>{manifest.key_hint}</div>
+      )}
+      <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
+        <input
+          type="password"
+          value={draft}
+          placeholder={status ? 'replace key…' : 'paste API key'}
+          onChange={(e) => setDraft(e.target.value)}
+          spellCheck={false}
+          autoComplete="off"
+          style={{ ...inputStyle(t), flex: 1 }}
+        />
+        <Btn size="sm" primary theme="dark" style={{ opacity: draft.trim() ? 1 : 0.55 }}
+          onClick={() => draft.trim() && call('set_provider_secret', { secret: draft }, 'Saved to the macOS Keychain.')}>Save</Btn>
+        {status && (
+          <Btn size="sm" theme="dark" onClick={() => call('clear_provider_secret', {}, 'Key removed.')}>Remove</Btn>
+        )}
+      </div>
+      {message && (
+        <div style={{ marginTop: 4, color: /Saved|removed/.test(message) ? t.green : t.red, fontFamily: FONT_MONO, fontSize: 10 }}>{message}</div>
+      )}
+    </div>
+  );
+}
+
+function ProviderKeysPanel({ t }) {
+  const keyed = providerCatalogList().filter(m => m.auth === 'api-key');
+  if (!keyed.length || !window.__TAURI__) return null;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{
+        color: t.textMute, fontFamily: FONT_MONO, fontSize: 9.5,
+        letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8,
+      }}>Provider API keys</div>
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 7, padding: '10px 12px 2px' }}>
+        {keyed.map(m => <ProviderKeyRow key={m.id} t={t} manifest={m}/>)}
+      </div>
+    </div>
+  );
+}
+
 function TaskInspector({ t, node, onPatch, dispatch }) {
   const providers = providersFor(node.capability);
   const entry = providerCapability(node.provider, node.capability);
-  const specs = taskParamSpecs(node.provider, node.capability);
+  const specs = nodeParamSpecs(node);
   const raw = node.provider_params?._raw_args;
+  const keyStatus = useProviderKeyStatus(node.provider);
 
   // Write back the fields a task edit can change (undefined removes `model`).
   const commit = (next) => onPatch({
@@ -1456,9 +1543,9 @@ function TaskInspector({ t, node, onPatch, dispatch }) {
           value={node.provider}
           disabled={providers.length < 2}
           onChange={(e) => {
-            const { node: next, dropped } = switchTaskProvider(node, e.target.value);
+            const { node: next, changes } = switchTaskProvider(node, e.target.value);
             commit(next);
-            setNotice(dropped.length ? `Removed settings ${providerName(next.provider)} doesn't support: ${dropped.join(', ')}` : '');
+            setNotice(changes.length ? `Adjusted for ${providerName(next.provider)}: ${changes.join(', ')}` : '');
           }}
           style={{ ...selectStyle(t), flex: 1 }}
         >
@@ -1467,6 +1554,12 @@ function TaskInspector({ t, node, onPatch, dispatch }) {
         <Btn size="sm" theme="dark" leftIcon="settings"
           onClick={() => dispatch({ type: 'UI_PATCH', patch: { configOpen: true } })}>Config</Btn>
       </div>
+      {keyStatus === false && (
+        <div style={{ marginTop: 6, color: t.red, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.5 }}>
+          No {providerName(node.provider)} API key — <span style={{ color: t.accent, cursor: 'pointer' }}
+            onClick={() => dispatch({ type: 'UI_PATCH', patch: { configOpen: true } })}>add it in Config</span> to run this node.
+        </div>
+      )}
       {notice && (
         <div style={{ marginTop: 6, color: t.amber, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.5 }}>{notice}</div>
       )}
@@ -1498,7 +1591,11 @@ function TaskInspector({ t, node, onPatch, dispatch }) {
           {[...models, ...(customModel ? [node.model] : [])].map(m => {
             const active = node.model === m;
             return (
-              <div key={m} title={m} onClick={() => commit(setTaskModel(node, m))} style={{
+              <div key={m} title={m} onClick={() => {
+                const { node: next, changes } = switchTaskModel(node, m);
+                commit(next);
+                setNotice(changes.length ? `Adjusted for ${modelLabel(node.provider, m)}: ${changes.join(', ')}` : '');
+              }} style={{
                 padding: '5px 9px',
                 background: active ? t.accentBg : t.panel,
                 border: `1px solid ${active ? t.accentBorder : t.border}`,
@@ -1748,6 +1845,8 @@ function ConfigModal({ t, state, dispatch }) {
         </div>
         <div className="mg-scroll" style={{ flex: 1, overflow: 'auto', padding: '14px 18px' }}>
           <ManagedRuntimePanel t={t} state={state}/>
+
+          <ProviderKeysPanel t={t}/>
 
           <div style={{ marginBottom: 16 }}>
             <div style={{

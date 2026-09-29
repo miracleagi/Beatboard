@@ -52,8 +52,10 @@ Double-click **`Beatboard.app`**, or drag it from the DMG into your Applications
 | **Asset** | Image / video / audio source — pick from local disk or the Library |
 
 ### Generation nodes
-Each generator node picks a provider and a model in the Inspector; today every node type runs on PixVerse.
-The settings each one offers come from `src/providers/pixverse.json`.
+Each generator node picks a provider and a model in the Inspector. Every node type runs on PixVerse;
+**Generate image** and **Generate video** can also run on [fal.ai](https://fal.ai) (FLUX, Nano Banana, Kling, Veo, Hailuo) —
+add your fal.ai API key under **⚙ Config → Provider API keys** (stored in the macOS Keychain; runs are billed to your fal account).
+The settings each one offers come from `src/providers/pixverse.json` and `src/providers/fal.json`.
 
 | Node | Type (MCP) | Description |
 |------|------------|-------------|
@@ -159,6 +161,8 @@ src-tauri/                   ← Rust backend
   src/runtime.rs             ← Bundled ffmpeg + Beatboard-managed PixVerse runtime
   src/providers/             ← Provider trait, input resolution, cancellation, catalog validation
   src/providers/pixverse/    ← PixVerse provider: task → CLI argv, execution, legacy argv nodes
+  src/providers/fal/         ← fal.ai provider: queue API, uploads, downloads
+  src/providers/secrets.rs   ← Provider API keys (macOS Keychain)
   src/ffmpeg.rs              ← ffmpeg node execution
   src/thumbs.rs              ← Result parsing & thumbnail download
   src/storage.rs             ← Project file persistence
