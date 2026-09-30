@@ -217,7 +217,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "compare_node",
-            "description": "Compare a generator node across providers / models: adds one copy of the node per variant (same inputs, settings adjusted to what each model accepts), feeds the original and all copies into a new Pick node, and moves the original's downstream connections onto the Pick. Run the Pick node to run every variant; the run then pauses until the user picks. Each variant is a separate paid run. A `comfyui.workflow` node is compared against the cloud models for what it produces (image.generate or video.generate): its connected prompt and media are wired into each copy's ports, and seed / count / negative_prompt carry over where the model takes them.",
+            "description": "Compare a generator node across providers / models: adds one copy of the node per variant (same inputs, settings adjusted to what each model accepts), feeds the original and all copies into a new Pick node, and moves the original's downstream connections onto the Pick. Run the Pick node to run every variant; the run then pauses until the user picks. Each variant is a separate paid run. A `comfyui.workflow` node is compared against the cloud models for what it produces (image.generate or video.generate): its connected prompt and media are wired into each copy's ports, and seed / count / negative_prompt carry over where the model takes them. Any image or video generator can also be compared against a ComfyUI workflow already on the canvas: pass { provider: \"comfyui\", workflow_node: <id of a comfyui.workflow node> } — the copy runs its own copy of that workflow, free, on the user's ComfyUI server.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -229,7 +229,8 @@ fn tool_definitions() -> Value {
                             "type": "object",
                             "properties": {
                                 "provider": { "type": "string" },
-                                "model": { "type": "string" }
+                                "model": { "type": "string" },
+                                "workflow_node": { "type": "string", "description": "For provider comfyui: the comfyui.workflow node whose workflow to run" }
                             },
                             "required": ["provider"]
                         },

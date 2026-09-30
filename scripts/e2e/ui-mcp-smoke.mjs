@@ -482,7 +482,7 @@ const sink = await mcp('add_node', { type: 'output', x: 1800, y: 1400 });
 await mcp('connect_nodes', { from_node: 'f1', to_node: cmpComfy.node_id, to_port: 'Reference' });
 await mcp('connect_nodes', { from_node: cmpComfy.node_id, to_node: sink.node_id });
 const toComfy = await mcp('compare_node', { node_id: cmpComfy.node_id, variants: [{ provider: 'comfyui' }] });
-check('ComfyUI is not a comparison target', !!toComfy.error && toComfy.error.includes('fal/flux-dev') && !toComfy.error.includes('comfyui'), toComfy);
+check('bare ComfyUI (no workflow) is not a comparison target', !!toComfy.error && toComfy.error.startsWith('comfyui cannot run') && toComfy.error.includes('fal/flux-dev'), toComfy);
 const emptyCmp = await mcp('compare_node', { node_id: fresh.node_id === undefined ? 'x' : (await mcp('add_node', { type: 'comfyui', x: 1400, y: 1700 })).node_id, variants: [{ provider: 'fal', model: 'flux-dev' }] });
 check('ComfyUI node needs a workflow to compare', !!emptyCmp.error && emptyCmp.error.includes('import a ComfyUI workflow'), emptyCmp);
 const cc = await mcp('compare_node', { node_id: cmpComfy.node_id, variants: [{ provider: 'fal', model: 'flux-dev' }, { provider: 'fal', model: 'nano-banana' }] });
@@ -513,7 +513,7 @@ check('pick offers the ComfyUI and cloud results', ccPick.state === 'waiting_for
 await page.evaluate(() => window.AtlasRunner.pick(0));
 await page.waitForTimeout(400);
 const ccPicked = await mcp('get_node_result', { node_id: cc.pick_node_id });
-check('picked ComfyUI result flows on', ccPicked.state === 'done' && ccPicked.outputs?.[0]?.path === `/tmp/${cmpComfy.node_id}.png`, ccPicked);
+check('picked ComfyUI result flows on', ccPicked.state === 'done' && (ccPicked.outputs?.find(o => o.chosen) || ccPicked.outputs?.[0])?.path === `/tmp/${cmpComfy.node_id}.png`, ccPicked);
 // The Inspector offers the same comparison.
 await selectNode(cmpComfy.node_id);
 text = await page.evaluate(() => document.body.innerText);
@@ -521,7 +521,51 @@ if (text.includes('Compare with other models…')) await inspectorClick('Compare
 text = await page.evaluate(() => document.body.innerText);
 const compareBlock = text.slice(text.indexOf('COMPARE'), text.indexOf('Create comparison'));
 check('Inspector compares ComfyUI with cloud models', compareBlock.includes('fal.ai · FLUX.1 [dev]') && compareBlock.includes('This ComfyUI run is free')
-  && !compareBlock.split('\n').some(line => line.startsWith('ComfyUI')), compareBlock);
+  && !compareBlock.split('\n').some(line => line.trim() === 'ComfyUI') && compareBlock.includes('ComfyUI · sdxl img2img'), compareBlock);
+
+// 21. The other way: a cloud node compared against ComfyUI workflows on the canvas.
+await mcp('connect_nodes', { from_node: 'p0', to_node: falImg.node_id, to_port: 'prompt' });
+await mcp('connect_nodes', { from_node: 'f1', to_node: falImg.node_id, to_port: 'img 1' });
+const badWf = await mcp('compare_node', { node_id: falImg.node_id, variants: [{ provider: 'comfyui', workflow_node: 'v1' }] });
+check('workflow target must be a ComfyUI node', !!badWf.error && badWf.error.includes('"v1" is not a ComfyUI node'), badWf);
+const listed = await mcp('compare_node', { node_id: falImg.node_id, variants: [{ provider: 'comfyui' }] });
+check('options list the canvas workflows', !!listed.error && listed.error.includes(`comfyui with workflow_node ${cmpComfy.node_id}`), listed);
+const toWf = await mcp('compare_node', { node_id: falImg.node_id, variants: [
+  { provider: 'comfyui', workflow_node: cmpComfy.node_id },
+  { provider: 'comfyui', workflow_node: fresh.node_id },
+] });
+let g6 = await mcp('get_graph');
+const wfA = g6.nodes.find(n => n.id === toWf.variant_node_ids?.[0]);
+const wfB = g6.nodes.find(n => n.id === toWf.variant_node_ids?.[1]);
+const into6 = id => g6.edges.filter(e => e.to === id);
+check('cloud node compared with ComfyUI workflows', toWf.ok && wfA?.type === 'comfyui.workflow' && wfA.title === 'ComfyUI · local sdxl'
+  && wfA.inputs.join() === 'prompt,Reference' && wfA.params.count === 2 && wfB?.workflow?.name === 'workflow', { toWf, wfA, wfB });
+check('inputs wired into the workflow ports', into6(wfA.id).map(e => `${e.from}>${e.to_port}`).sort().join() === 'f1>Reference,p0>prompt'
+  && into6(wfB.id).map(e => `${e.from}>${e.to_port}`).join() === 'f1>Reference', { a: into6(wfA.id), b: into6(wfB.id) });
+check('unusable prompt listed', (toWf.adjusted_params?.[wfB.id] || []).includes('input "prompt" not connected (no free port)'), toWf.adjusted_params);
+await mcp('set_params', { node_id: cmpComfy.node_id, params: { workflow_name: 'renamed later' } });
+g6 = await mcp('get_graph');
+check('copies run their own workflow copy', g6.nodes.find(n => n.id === wfA.id).workflow.name === 'local sdxl', null);
+const wfRun = await mcp('run_node', { node_id: toWf.pick_node_id });
+check('ComfyUI variants are free', wfRun.ok && wfRun.paid_generations === 1 && !wfRun.needs_user_confirmation, wfRun);
+await page.waitForTimeout(2000);
+const wfPick = await mcp('get_node_result', { node_id: toWf.pick_node_id });
+check('pick offers the cloud and ComfyUI results', wfPick.state === 'waiting_for_pick' && wfPick.candidates === 3, wfPick);
+await page.evaluate(() => window.AtlasRunner.pick(1));
+await page.waitForTimeout(400);
+const wfPicked = await mcp('get_node_result', { node_id: toWf.pick_node_id });
+check('picked ComfyUI variant flows on', wfPicked.state === 'done' && wfPicked.outputs?.find(o => o.chosen)?.path === `/tmp/${wfA.id}.png`, wfPicked);
+// ComfyUI against another ComfyUI workflow.
+const wfVsWf = await mcp('compare_node', { node_id: comfy.node_id, variants: [{ provider: 'comfyui', workflow_node: cmpComfy.node_id }] });
+const g7 = await mcp('get_graph');
+const wfC = g7.nodes.find(n => n.id === wfVsWf.variant_node_ids?.[0]);
+check('ComfyUI compared with another workflow', wfVsWf.ok && wfC?.workflow?.name === 'renamed later' && g7.edges.some(e => e.to === wfC.id && e.from === 'p0' && e.to_port === 'prompt'), { wfVsWf, wfC });
+// The Inspector lists the workflows, marking same-named ones by node id.
+await selectNode(falImg.node_id);
+text = await page.evaluate(() => document.body.innerText);
+if (text.includes('Compare with other models…')) await inspectorClick('Compare with other models…');
+text = await page.evaluate(() => document.body.innerText);
+check('Inspector offers canvas workflows', text.includes('ComfyUI · local sdxl') && text.includes(`ComfyUI · workflow (${fresh.node_id})`) && text.includes('ComfyUI workflows run free'), null);
 
 // 11. Clicking a palette entry adds a task node (last: it may land on top of other nodes).
 const before = (await mcp('get_graph')).nodes.length;

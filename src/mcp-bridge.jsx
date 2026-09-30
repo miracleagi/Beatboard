@@ -452,10 +452,11 @@ async function mcpSetParams(args, stateRef, dispatch) {
 async function mcpCompareNode(args, stateRef, dispatch) {
   const found = await mcpFindNode(stateRef, args.node_id);
   if (found.error) return { error: found.error };
-  const variants = (args.variants || []).map(v => ({ provider: v.provider, model: v.model }));
+  const variants = (args.variants || []).map(v => ({ provider: v.provider, model: v.model, workflow_node: v.workflow_node }));
   const result = buildComparison(found.proj.graph, args.node_id, variants);
   if (result.error) {
-    const options = comparisonTargets(found.node).map(o => `${o.provider}${o.model ? `/${o.model}` : ''}`);
+    const options = comparisonTargets(found.node, found.proj.graph)
+      .map(o => (o.workflow_node ? `comfyui with workflow_node ${o.workflow_node}` : `${o.provider}${o.model ? `/${o.model}` : ''}`));
     return { error: `${result.error}${options.length ? ` — options: ${options.join(', ')}` : ''}` };
   }
   dispatch({ type: 'PATCH_GRAPH', fn: g => buildComparison(g, args.node_id, variants).graph || g });
@@ -465,7 +466,7 @@ async function mcpCompareNode(args, stateRef, dispatch) {
     pick_node_id: result.pickId,
     variant_node_ids: result.variantIds,
     ...(Object.keys(result.changes).length ? { adjusted_params: result.changes } : {}),
-    note: 'run_node on the pick node runs every variant, then pauses for the user to pick; each variant is a separate paid run',
+    note: 'run_node on the pick node runs every variant, then pauses for the user to pick; each cloud variant is a separate paid run (ComfyUI variants are free)',
   };
 }
 

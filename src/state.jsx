@@ -1020,20 +1020,39 @@ function comparisonCapability(node) {
   return node?.capability || null;
 }
 
-// What a node can be compared against. Workflow providers (ComfyUI) are never
-// a target: a copy would have no workflow to run.
-function comparisonTargets(node) {
-  const capability = comparisonCapability(node);
-  if (!capability) return [];
-  return comparisonOptions(capability).filter(o => !providerManifest(o.provider)?.workflow);
+// Identifies a comparison variant: a provider + model, or the ComfyUI node
+// whose workflow it runs.
+function variantKey(v) {
+  return v.workflow_node ? `workflow|${v.workflow_node}` : `${v.provider}|${v.model || ''}`;
 }
 
-// A standard generator node standing in for a ComfyUI node: the variant's
-// defaults plus the seed / count / negative prompt it accepts (clamped to its
-// range). Returns { node, changes }.
-function workflowVariant(original, capability, variant) {
-  let node = spawnTaskNode(capability, variant.provider);
-  if (variant.model && node.model !== variant.model) node = switchTaskModel(node, variant.model).node;
+// ComfyUI nodes in the graph with a workflow producing what `node` compares on.
+function workflowTargets(node, graph) {
+  const kind = capabilityInfo(comparisonCapability(node))?.output;
+  const found = (graph?.nodes || []).filter(n => n.id !== node.id && n.kind === 'task' && n.workflow
+    && providerManifest(n.provider)?.workflow && taskOutputKind(n) === kind);
+  const names = found.map(n => n.workflow.name || 'workflow');
+  return found.map((n, i) => ({
+    provider: n.provider,
+    workflow_node: n.id,
+    label: `${providerName(n.provider)} · ${names[i]}${names.filter(x => x === names[i]).length > 1 ? ` (${n.id})` : ''}`,
+  }));
+}
+
+// What a node can be compared against: the cloud models for its capability,
+// and the project's ComfyUI workflows that produce the same kind of output.
+// A bare ComfyUI provider is never a target: it needs a workflow to run.
+function comparisonTargets(node, graph) {
+  const capability = comparisonCapability(node);
+  if (!capability) return [];
+  const models = comparisonOptions(capability).filter(o => !providerManifest(o.provider)?.workflow);
+  return [...models, ...workflowTargets(node, graph)];
+}
+
+// Copy the original's seed / count / negative prompt onto a variant where it
+// takes them (clamped to its range). Returns { node, changes }.
+function carrySettings(original, target) {
+  let node = target;
   const changes = [];
   const carried = {
     seed: original.params?.seed,
@@ -1052,9 +1071,25 @@ function workflowVariant(original, capability, variant) {
   return { node, changes };
 }
 
-// Incoming edges of a ComfyUI node re-aimed at a standard node's ports: each
-// input goes to the next free port of its kind, in port order. Inputs with no
-// such port are dropped and listed.
+// A standard generator node standing in for a ComfyUI node, with the
+// variant's defaults plus the settings it accepts.
+function workflowVariant(original, capability, variant) {
+  let node = spawnTaskNode(capability, variant.provider);
+  if (variant.model && node.model !== variant.model) node = switchTaskModel(node, variant.model).node;
+  return carrySettings(original, node);
+}
+
+// A new ComfyUI node running its own copy of `source`'s workflow (later edits
+// to `source` don't change it), with the settings it accepts.
+function workflowCopy(source, original) {
+  const workflow = JSON.parse(JSON.stringify(source.workflow));
+  const node = withComfyWorkflow(spawnTaskNode(source.capability, source.provider), workflow);
+  return carrySettings(original, node);
+}
+
+// Incoming edges re-aimed at a node with different ports (ComfyUI ⇄ standard):
+// each input goes to the next free port of its kind, in port order. Inputs with
+// no such port are dropped and listed.
 function remapInputsTo(original, copy, incoming) {
   const used = new Set();
   const edges = [];
@@ -1083,37 +1118,47 @@ function buildComparison(graph, nodeId, variants) {
   if (fromWorkflow && !original.workflow) return { error: 'import a ComfyUI workflow into this node before comparing it' };
   const capability = comparisonCapability(original);
   if (!capability) return { error: `a ComfyUI workflow producing ${taskOutputKind(original)} can't be compared with cloud models yet` };
-  const options = comparisonTargets(original);
+  const options = comparisonTargets(original, graph);
   const incoming = graph.edges.filter(e => e.to.node === original.id);
   // Without a connected prompt the workflow's own prompt text stands in.
   const hasPromptEdge = incoming.some(e => original.ports?.[e.to.port]?.kind === 'text');
   const binding = original.workflow?.bindings?.prompt;
   const workflowPrompt = binding ? original.workflow.graph?.[binding.node]?.inputs?.[binding.input] : undefined;
-  const seen = new Set([`${original.provider}|${original.model || ''}`]);
+  const seen = new Set([fromWorkflow ? `workflow|${original.id}` : variantKey(original)]);
   const nodes = [...graph.nodes];
   const edges = [...graph.edges];
   const variantIds = [];
   const changes = {};
   const height = 210;
   for (const variant of variants) {
-    const key = `${variant.provider}|${variant.model || ''}`;
+    const key = variantKey(variant);
     if (seen.has(key)) continue;
     seen.add(key);
-    if (!options.some(o => o.provider === variant.provider && (o.model || '') === (variant.model || ''))) {
+    if (!options.some(o => variantKey(o) === key)) {
+      if (variant.workflow_node) {
+        return { error: `"${variant.workflow_node}" is not a ComfyUI node with a workflow producing ${capabilityInfo(capability)?.output || 'this output'}` };
+      }
       return { error: `${variant.provider}${variant.model ? ` / ${variant.model}` : ''} cannot run ${capability}` };
     }
     const id = makeNodeId({ nodes }, 'gen');
     const place = { id, x: original.x, y: (original.y || 0) + height * (variantIds.length + 1), thumbs: [] };
     let copy;
     let noted = [];
-    if (fromWorkflow) {
-      const made = workflowVariant(original, capability, variant);
+    if (variant.workflow_node || fromWorkflow) {
+      const made = variant.workflow_node
+        ? workflowCopy(nodeById(graph, variant.workflow_node), original)
+        : workflowVariant(original, capability, variant);
       copy = { ...made.node, ...place };
       noted = made.changes;
-      if (original.prompt) copy.prompt = original.prompt;
-      else if (!hasPromptEdge && typeof workflowPrompt === 'string' && workflowPrompt.trim()) {
-        copy.prompt = workflowPrompt;
-        noted.push('prompt taken from the workflow');
+      // The same prompt for every variant: the original's own, or (with none
+      // connected) the one saved in its workflow.
+      const fromOwnWorkflow = !original.prompt && !hasPromptEdge && typeof workflowPrompt === 'string' && workflowPrompt.trim();
+      const promptText = original.prompt || (fromOwnWorkflow ? workflowPrompt : '');
+      if (promptText && copy.workflow && !copy.workflow.bindings?.prompt) {
+        noted.push('prompt not used (the workflow has no prompt input)');
+      } else if (promptText) {
+        copy.prompt = promptText;
+        if (fromOwnWorkflow) noted.push('prompt taken from the workflow');
       }
       const { edges: mapped, dropped } = remapInputsTo(original, copy, incoming);
       edges.push(...mapped);
@@ -1162,7 +1207,7 @@ function buildComparison(graph, nodeId, variants) {
 Object.assign(window, {
   NODE_TEMPLATES, paletteTemplates, Storage, Executor,
   makeInitialState, appReducer,
-  comparisonOptions, comparisonCapability, comparisonTargets, buildComparison, settleInterruptedResults, paidRunSummary, needsPaidRunConfirmation, reportedSpend, DEFAULT_PAID_RUN_LIMIT,
+  comparisonOptions, comparisonCapability, comparisonTargets, variantKey, buildComparison, settleInterruptedResults, paidRunSummary, needsPaidRunConfirmation, reportedSpend, DEFAULT_PAID_RUN_LIMIT,
   nodeById, nodeIdPrefix, nodeDisplayWidth, normalizeGraphPorts, topoOrder, downstreamNodeIds, defaultRunNodeIds, runOrderNodeIds, activeDepsForRun, canConnect, makeNodeId,
   // Thumb helpers — exported so editor.jsx can reuse without duplicating
   resultThumbs, sourceThumbs, upstreamThumbs, thumbHasUsableSource, usableResultThumbs,

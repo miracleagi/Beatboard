@@ -1808,13 +1808,14 @@ function CompareSection({ t, node, graph, dispatch }) {
   const [chosen, setChosen] = React.useState([]);
   const [error, setError] = React.useState('');
   React.useEffect(() => { setOpen(false); setChosen([]); setError(''); }, [node.id]);
-  const options = comparisonTargets(node)
-    .filter(o => !(o.provider === node.provider && (o.model || '') === (node.model || '')));
+  const options = comparisonTargets(node, graph)
+    .filter(o => o.workflow_node || variantKey(o) !== variantKey(node));
   if (!options.length) return null;
-  const key = o => `${o.provider}|${o.model || ''}`;
+  const key = variantKey;
   const toggle = o => setChosen(c => c.includes(key(o)) ? c.filter(k => k !== key(o)) : [...c, key(o)]);
   const create = () => {
-    const variants = options.filter(o => chosen.includes(key(o))).map(({ provider, model }) => ({ provider, model }));
+    const variants = options.filter(o => chosen.includes(key(o)))
+      .map(({ provider, model, workflow_node }) => ({ provider, model, workflow_node }));
     const result = buildComparison(graph, node.id, variants);
     if (result.error) { setError(result.error); return; }
     dispatch({ type: 'PATCH_GRAPH', fn: g => buildComparison(g, node.id, variants).graph || g });
@@ -1830,7 +1831,7 @@ function CompareSection({ t, node, graph, dispatch }) {
         <div style={{ marginTop: 6, color: t.textMute, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.5 }}>
           {providerManifest(node.provider)?.workflow
             ? 'Runs the same inputs on cloud models for comparison and adds a Pick node; whatever you pick flows downstream. This ComfyUI run is free; each cloud variant is a paid run.'
-            : 'Runs the same inputs on each choice and adds a Pick node; whatever you pick flows downstream. Every variant is a separate paid run.'}
+            : 'Runs the same inputs on each choice and adds a Pick node; whatever you pick flows downstream. Each cloud variant is a separate paid run; ComfyUI workflows run free on your server.'}
         </div>
         <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {options.map(o => {
