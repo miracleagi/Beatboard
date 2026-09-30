@@ -128,5 +128,15 @@
     ],
     "output_top": 80,
     "aliases": ["template"]
+  },
+  "comfyui.workflow": {
+    "title": "ComfyUI workflow",
+    "group": "Local",
+    "output": "image",
+    "ports": [
+      { "kind": "text", "top": 52, "label": "prompt", "slot": "prompt" }
+    ],
+    "output_top": 52,
+    "aliases": ["comfyui"]
   }
 }

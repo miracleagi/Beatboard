@@ -325,6 +325,7 @@ function cleanConfig(config) {
   return {
     binPaths: { ffmpeg: binPaths.ffmpeg || '', pixverse: binPaths.pixverse || '' },
     paidRunLimit: limit === null || (Number.isInteger(limit) && limit >= 0) ? limit : DEFAULT_PAID_RUN_LIMIT,
+    ...(typeof config?.comfyuiUrl === 'string' && config.comfyuiUrl.trim() ? { comfyuiUrl: config.comfyuiUrl.trim() } : {}),
   };
 }
 
@@ -352,7 +353,8 @@ function paidRunSummary(graph, order) {
   let total = 0;
   (order || []).forEach(id => {
     const node = nodeById(graph, id);
-    if (node?.kind !== 'task') return;
+    // Local providers (ComfyUI) cost nothing per run.
+    if (node?.kind !== 'task' || providerManifest(node.provider)?.local) return;
     const entry = byProvider[node.provider] || (byProvider[node.provider] = { runs: 0, outputs: 0, nodes: [] });
     entry.runs += 1;
     entry.outputs += Number(node.params?.count) > 0 ? Number(node.params.count) : 1;

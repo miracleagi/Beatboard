@@ -294,7 +294,7 @@ function migrateLegacyPixVerseNode(node) {
 // ════════════════════════════════════════════════════════════════════════════
 
 // In palette order: a capability's first provider is the default for new nodes.
-const PROVIDER_MANIFEST_FILES = ['pixverse', 'fal'];
+const PROVIDER_MANIFEST_FILES = ['pixverse', 'fal', 'comfyui'];
 let providerCatalog = { capabilities: {}, providers: [] };
 
 function setProviderCatalog(catalog) {
@@ -362,8 +362,18 @@ function taskParamSpecs(provider, capability, model) {
     .map(p => ({ ...(manifest.param_defs?.[p.key] || {}), ...p, ...(overrides[p.key] || {}) }));
 }
 
+// Whether a node's imported workflow (ComfyUI) binds an input for `role`:
+// `seed`, `negative` or `prompt`. Params marked `needs_binding` only apply then.
+function workflowHasBinding(node, role) {
+  const b = node?.workflow?.bindings;
+  if (!b) return false;
+  if (role === 'seed') return (b.seed || []).length > 0;
+  return !!b[role];
+}
+
 function nodeParamSpecs(node) {
-  return taskParamSpecs(node.provider, node.capability, node.model);
+  return taskParamSpecs(node.provider, node.capability, node.model)
+    .filter(spec => !spec.needs_binding || workflowHasBinding(node, spec.needs_binding));
 }
 
 function providerName(provider) {
@@ -376,7 +386,7 @@ function modelLabel(provider, model) {
 }
 
 function taskOutputKind(node) {
-  return capabilityInfo(node?.capability)?.output || 'image';
+  return node?.workflow?.output_kind || capabilityInfo(node?.capability)?.output || 'image';
 }
 
 // Effective value of a param: what the node sets, else the manifest default.
@@ -408,8 +418,11 @@ function taskNodeDecor(node) {
   const info = capabilityInfo(node.capability);
   const model = modelLabel(node.provider, node.model);
   const summary = taskSummaryFields(node).map(f => f.v).join(' · ');
+  const title = node.workflow
+    ? ['ComfyUI', node.workflow.name || 'workflow'].join(' · ')
+    : [info?.title || node.capability, model].filter(Boolean).join(' · ');
   return {
-    title: [info?.title || node.capability, model].filter(Boolean).join(' · '),
+    title,
     badge: node.provider || 'task',
     footer: {
       ...(node.footer || {}),
@@ -579,7 +592,7 @@ const TaskModel = {
   // catalog
   setProviderCatalog, loadProviderCatalog, providerCatalogList, capabilityIds, capabilityInfo, resolveCapability,
   providerManifest, providersFor, providerCapability, taskParamSpecs, providerName, modelLabel,
-  nodeParamSpecs, taskOutputKind, taskParamValue, taskSummaryFields, taskNodeDecor, taskPortsFor, spawnTaskNode,
+  workflowHasBinding, nodeParamSpecs, taskOutputKind, taskParamValue, taskSummaryFields, taskNodeDecor, taskPortsFor, spawnTaskNode,
   setTaskParam, reconcileTaskParams, switchTaskModel, switchTaskProvider, applyTaskParams,
   // migration
   PV_TASK_SPECS, isTaskNode, isLegacyPixVerseNode, migrateLegacyPixVerseNode,

@@ -1587,6 +1587,218 @@ function ProviderKeysPanel({ t }) {
   );
 }
 
+// Config: where the ComfyUI server runs (local by default, nothing billed).
+function ComfyServerRow({ t, state, dispatch }) {
+  const manifest = providerManifest('comfyui');
+  const saved = state.config.comfyuiUrl || '';
+  const [draft, setDraft] = React.useState(saved);
+  const [status, setStatus] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => { setDraft(saved); }, [saved]);
+  if (!manifest) return null;
+  const commit = () => {
+    const next = draft.trim();
+    if (next && !/^https?:\/\//.test(next)) { setStatus({ ok: false, text: 'The address must start with http:// or https://' }); return; }
+    if (next !== saved) { dispatch({ type: 'SET_CONFIG', patch: { comfyuiUrl: next } }); setStatus(null); }
+  };
+  const test = async () => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const info = await window.__TAURI__.tauri.invoke('comfyui_status', { config: { ...state.config, comfyuiUrl: draft.trim() } });
+      const version = info?.system?.comfyui_version;
+      const device = info?.devices?.[0]?.name;
+      setStatus({ ok: true, text: ['Connected', version && `ComfyUI ${version}`, device].filter(Boolean).join(' · ') });
+    } catch (error) {
+      setStatus({ ok: false, text: String(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{
+        color: t.textMute, fontFamily: FONT_MONO, fontSize: 9.5,
+        letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8,
+      }}>ComfyUI server</div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          data-testid="comfyui-url"
+          value={draft}
+          placeholder={manifest.default_server}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+          spellCheck={false}
+          style={{ ...inputStyle(t), flex: 1, minWidth: 0 }}
+        />
+        {window.__TAURI__ && (
+          <Btn size="sm" theme="dark" style={{ flex: 'none', opacity: busy ? 0.6 : 1 }}
+            onClick={() => !busy && test()}>{busy ? 'Testing…' : 'Test'}</Btn>
+        )}
+      </div>
+      <div style={{ marginTop: 6, color: status ? (status.ok ? t.green || t.accent : t.red) : t.textMute, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.5 }}>
+        {status ? status.text : manifest.server_hint}
+      </div>
+    </div>
+  );
+}
+
+const comfyPickerLabel = (graph, target) => {
+  const node = graph[target.node];
+  const value = node?.inputs?.[target.input];
+  const preview = typeof value === 'string' ? ` “${value.slice(0, 28)}${value.length > 28 ? '…' : ''}”` : typeof value === 'number' ? ` = ${value}` : '';
+  return `${comfyNodeTitle(graph, target.node)} · ${target.input}${preview}`;
+};
+
+// Import a ComfyUI workflow and choose what the node's inputs and output map to.
+function ComfyWorkflowSection({ t, node, dispatch }) {
+  const [error, setError] = React.useState('');
+  const [pasting, setPasting] = React.useState(false);
+  const [pasted, setPasted] = React.useState('');
+  const fileRef = React.useRef(null);
+  React.useEffect(() => { setError(''); setPasting(false); setPasted(''); }, [node.id]);
+  const wf = node.workflow;
+
+  const save = (workflow) => {
+    setError('');
+    dispatch({
+      type: 'PATCH_GRAPH',
+      fn: g => {
+        const current = g.nodes.find(n => n.id === node.id);
+        return current ? replaceNodeKeepingEdges(g, withComfyWorkflow(current, workflow)) : g;
+      },
+    });
+  };
+  const importText = (text, fileName) => {
+    const parsed = parseComfyWorkflow(text);
+    if (parsed.error) { setError(parsed.error); return; }
+    const name = (fileName || '').replace(/\.json$/i, '') || wf?.name || 'workflow';
+    save(makeComfyWorkflow(parsed.graph, { name }));
+    setPasting(false);
+    setPasted('');
+  };
+  const onFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => importText(String(reader.result || ''), file.name);
+    reader.onerror = () => setError(`Could not read ${file.name}`);
+    reader.readAsText(file);
+  };
+  const rebind = (patch) => save(makeComfyWorkflow(wf.graph, { name: wf.name, bindings: { ...wf.bindings, ...patch } }));
+
+  const importControls = (
+    <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+      <input ref={fileRef} type="file" accept=".json,application/json" data-testid="comfy-file"
+        style={{ display: 'none' }} onChange={onFile}/>
+      <Btn size="sm" theme="dark" leftIcon="folder" style={{ flex: 1, justifyContent: 'center' }}
+        onClick={() => fileRef.current && fileRef.current.click()}>{wf ? 'Replace…' : 'Import workflow…'}</Btn>
+      <Btn size="sm" theme="dark" onClick={() => setPasting(p => !p)}>Paste JSON</Btn>
+    </div>
+  );
+
+  const box = (children) => <div style={sectionBox(t)}>{children}</div>;
+  const note = (text, color) => (
+    <div style={{ marginTop: 6, color: color || t.textMute, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.5 }}>{text}</div>
+  );
+  const pasteBox = pasting && (
+    <div style={{ marginTop: 8 }}>
+      <textarea data-testid="comfy-paste" value={pasted} onChange={(e) => setPasted(e.target.value)}
+        placeholder="Paste the API-format workflow JSON" spellCheck={false}
+        style={{ ...inputStyle(t), height: 90, resize: 'vertical', fontSize: 10 }}/>
+      <Btn size="sm" primary theme="dark" style={{ marginTop: 6, width: '100%', justifyContent: 'center' }}
+        onClick={() => importText(pasted)}>Use this workflow</Btn>
+    </div>
+  );
+
+  if (!wf) {
+    return box(<>
+      <SectionLabel t={t}>Workflow</SectionLabel>
+      {note('In ComfyUI choose Workflow → Export (API), then import the file here.')}
+      {importControls}
+      {pasteBox}
+      {error && note(error, t.red)}
+    </>);
+  }
+
+  const graph = wf.graph || {};
+  const c = comfyCandidates(graph);
+  const b = wf.bindings || {};
+  const same = (a, x) => a && x && a.node === x.node && a.input === x.input;
+  const keyOf = x => `${x.node}|${x.input}`;
+  const fromKey = (list, k) => list.find(x => keyOf(x) === k) || null;
+  const label = (text) => (
+    <div style={{ marginTop: 10, color: t.textMute, fontFamily: FONT_MONO, fontSize: 9.5, letterSpacing: 0.5, textTransform: 'uppercase' }}>{text}</div>
+  );
+  const textPicker = (role, title) => (<>
+    {label(title)}
+    <select data-testid={`comfy-${role}`} value={b[role] ? keyOf(b[role]) : ''}
+      onChange={(e) => rebind({ [role]: fromKey(c.text, e.target.value) })}
+      style={{ ...selectStyle(t), width: '100%', flex: 'none', marginTop: 2 }}>
+      <option value="">— not connected —</option>
+      {c.text.map(x => <option key={keyOf(x)} value={keyOf(x)}>{comfyPickerLabel(graph, x)}</option>)}
+    </select>
+  </>);
+  const checkList = (items, chosen, onToggle, render, testid) => (
+    <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {items.map(x => {
+        const on = chosen.some(y => same(y, x));
+        return (
+          <div key={keyOf(x)} data-testid={testid} onClick={() => onToggle(x, on)} style={{
+            display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', userSelect: 'none',
+            padding: '4px 7px', borderRadius: 4,
+            background: on ? t.accentBg : t.panel, border: `1px solid ${on ? t.accentBorder : t.border}`,
+            color: on ? t.accent : t.textMid, fontFamily: FONT_MONO, fontSize: 10,
+          }}>
+            <Icon name={on ? 'check' : 'plus'} size={9} color={on ? t.accent : t.textMute}/>
+            {render(x)}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  return box(<>
+    <SectionLabel t={t}>Workflow</SectionLabel>
+    <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
+      <input data-testid="comfy-name" defaultValue={wf.name} key={`${node.id}:${wf.name}`}
+        onBlur={(e) => { const v = e.target.value.trim(); if (v !== wf.name) save({ ...wf, name: v }); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+        spellCheck={false} style={{ ...inputStyle(t), flex: 1, minWidth: 0 }}/>
+      <span style={{ color: t.textMute, fontFamily: FONT_MONO, fontSize: 10, flex: 'none' }}>{Object.keys(graph).length} nodes</span>
+    </div>
+    {importControls}
+    {pasteBox}
+    {error && note(error, t.red)}
+
+    {textPicker('prompt', 'Prompt goes to')}
+    {textPicker('negative', 'Negative prompt goes to')}
+
+    {label('Seed')}
+    {c.seed.length ? checkList(c.seed, b.seed || [],
+      (x, on) => rebind({ seed: on ? (b.seed || []).filter(y => !same(y, x)) : [...(b.seed || []), x] }),
+      x => comfyPickerLabel(graph, x), 'comfy-seed')
+      : note('No seed input in this workflow.')}
+
+    {label('Inputs (one port each)')}
+    {c.media.length ? checkList(c.media, b.inputs || [],
+      (x, on) => rebind({ inputs: on ? (b.inputs || []).filter(y => !same(y, x)) : [...(b.inputs || []), x] }),
+      x => `${comfyPickerLabel(graph, x)} · ${x.kind}`, 'comfy-input')
+      : note('No Load Image / Video / Audio node in this workflow.')}
+
+    {label('Result')}
+    <select data-testid="comfy-output" value={b.output || ''}
+      onChange={(e) => rebind({ output: e.target.value || null })}
+      style={{ ...selectStyle(t), width: '100%', flex: 'none', marginTop: 2 }}>
+      <option value="">every saved file</option>
+      {c.outputs.map(o => <option key={o.node} value={o.node}>{comfyNodeTitle(graph, o.node)} · {o.kind}</option>)}
+    </select>
+    {note('Anything not connected keeps the value saved in the workflow.')}
+  </>);
+}
+
 // Run this node on other providers / models side by side: creates one copy
 // per choice plus a Pick node that the original's downstream now reads from.
 function CompareSection({ t, node, graph, dispatch }) {
@@ -1649,6 +1861,7 @@ function TaskInspector({ t, node, graph, onPatch, dispatch }) {
   const specs = nodeParamSpecs(node);
   const raw = node.provider_params?._raw_args;
   const keyStatus = useProviderKeyStatus(node.provider);
+  const manifest = providerManifest(node.provider);
 
   // Write back the fields a task edit can change (undefined removes `model`).
   const commit = (next) => onPatch({
@@ -1728,6 +1941,8 @@ function TaskInspector({ t, node, graph, onPatch, dispatch }) {
       </div>
     )}
 
+    {manifest?.workflow && <ComfyWorkflowSection t={t} node={node} dispatch={dispatch}/>}
+
     {!raw && models.length > 0 && (
       <div style={sectionBox(t)}>
         <SectionLabel t={t}>Model</SectionLabel>
@@ -1763,7 +1978,7 @@ function TaskInspector({ t, node, graph, onPatch, dispatch }) {
         onSet={(spec, value) => commit(setTaskParam(node, spec, value))}/>
     ))}
 
-    {!raw && <CompareSection t={t} node={node} graph={graph} dispatch={dispatch}/>}
+    {!raw && !manifest?.workflow && <CompareSection t={t} node={node} graph={graph} dispatch={dispatch}/>}
 
     <TaskCommandPreview t={t} node={node}/>
   </>);
@@ -1993,6 +2208,8 @@ function ConfigModal({ t, state, dispatch }) {
           <ManagedRuntimePanel t={t} state={state}/>
 
           <ProviderKeysPanel t={t}/>
+
+          <ComfyServerRow t={t} state={state} dispatch={dispatch}/>
 
           <PaidRunLimitRow t={t} state={state} dispatch={dispatch}/>
 

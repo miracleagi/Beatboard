@@ -55,6 +55,12 @@ Beatboard 会自行管理所有运行依赖：ffmpeg 已内置，PixVerse CLI �
 在 **⚙ Config → Provider API keys** 中填入 fal.ai API key（保存在 macOS 钥匙串中；运行费用计入你的 fal 账户）。
 各节点可用的参数来自 `src/providers/pixverse.json` 和 `src/providers/fal.json`。
 
+**ComfyUI workflow** 在你的 [ComfyUI](https://github.com/comfyanonymous/ComfyUI) 服务器上运行你自己的工作流
+（默认是本机 `http://127.0.0.1:8188`，可在 **⚙ Config → ComfyUI server** 修改），不产生费用。
+在 ComfyUI 中选择 **Workflow → Export (API)**，再在节点的 Inspector 里导入这个文件。Beatboard 会建议哪个节点接收
+提示词、反向提示词和种子，哪些 Load Image / Video / Audio 节点变成输入端口，以及哪个节点是结果；都可以在 Inspector 里修改。
+没有连接的输入沿用工作流里保存的值。
+
 | 节点 | 类型（MCP） | 说明 |
 |------|------------|------|
 | **Generate image** | `image.generate` | 文生图 / 图生图 |
@@ -68,6 +74,7 @@ Beatboard 会自行管理所有运行依赖：ffmpeg 已内置，PixVerse CLI �
 | **Voice (TTS)** | `audio.speech` | 生成独立的文字转语音音频 |
 | **Music** | `audio.music` | 生成纯音乐、自动歌词或自定义歌词音乐 |
 | **Template / effect** | `provider.template` | 按模板 ID 运行 PixVerse 模板 / 特效 |
+| **ComfyUI workflow** | `comfyui.workflow` | 在你的 ComfyUI 服务器上运行你自己的工作流（API 格式） |
 
 ### 工具节点
 | 节点 | 说明 |
@@ -148,6 +155,7 @@ src/                         ← 前端源码（JSX，不需要编译步骤）
   shared.jsx                 ← 设计 token、图标、通用组件
   state.jsx                  ← 状态管理、节点模板、Executor 接口
   task-model.jsx             ← 生成（task）节点：供应商目录、参数、旧节点迁移
+  comfyui-workflow.jsx       ← ComfyUI 工作流导入：绑定建议、端口
   providers/                 ← 能力注册表 + 供应商声明（JSON，Rust 端也读取）
   editor.jsx                 ← 画布：拖拽、连线、运行器
   editor-node.jsx            ← 单个节点组件
@@ -163,6 +171,7 @@ src-tauri/                   ← Rust 后端
   src/providers/             ← Provider 接口、输入解析、取消、目录校验
   src/providers/pixverse/    ← PixVerse 供应商：task → CLI 参数、执行、旧格式节点
   src/providers/fal/         ← fal.ai 供应商：队列接口、上传、下载
+  src/providers/comfyui/     ← ComfyUI 供应商：工作流绑定、/prompt、/history、上传
   src/providers/secrets.rs   ← 供应商 API key（macOS 钥匙串）
   src/ffmpeg.rs              ← ffmpeg 节点执行
   src/thumbs.rs              ← 运行结果解析与缩略图下载

@@ -57,6 +57,12 @@ Each generator node picks a provider and a model in the Inspector. Every node ty
 add your fal.ai API key under **⚙ Config → Provider API keys** (stored in the macOS Keychain; runs are billed to your fal account).
 The settings each one offers come from `src/providers/pixverse.json` and `src/providers/fal.json`.
 
+**ComfyUI workflow** runs your own [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflow on your ComfyUI server
+(local by default, `http://127.0.0.1:8188`; change it under **⚙ Config → ComfyUI server**). Nothing is billed.
+In ComfyUI choose **Workflow → Export (API)**, then import the file in the node's Inspector. Beatboard suggests which
+node takes the prompt, the negative prompt and the seed, which Load Image / Video / Audio nodes become input ports,
+and which node is the result; change any of them there. Anything left unconnected keeps the value saved in the workflow.
+
 | Node | Type (MCP) | Description |
 |------|------------|-------------|
 | **Generate image** | `image.generate` | Text-to-image or image-to-image |
@@ -70,6 +76,7 @@ The settings each one offers come from `src/providers/pixverse.json` and `src/pr
 | **Voice (TTS)** | `audio.speech` | Generate standalone text-to-speech audio |
 | **Music** | `audio.music` | Generate music with custom, automatic, or no lyrics |
 | **Template / effect** | `provider.template` | Run a PixVerse template/effect by template ID |
+| **ComfyUI workflow** | `comfyui.workflow` | Run your own ComfyUI workflow (API format) on your ComfyUI server |
 
 ### Utility nodes
 | Node | Description |
@@ -151,6 +158,7 @@ src/                         ← Frontend source (JSX, no build step needed)
   shared.jsx                 ← Design tokens, icons, shared components
   state.jsx                  ← State management, node templates, Executor interface
   task-model.jsx             ← Generator (task) nodes: provider catalog, params, legacy migration
+  comfyui-workflow.jsx       ← ComfyUI workflow import: suggested bindings, ports
   providers/                 ← Capability registry + provider manifests (JSON, also read by Rust)
   editor.jsx                 ← Canvas: drag, connect, runner
   editor-node.jsx            ← Individual node component
@@ -166,6 +174,7 @@ src-tauri/                   ← Rust backend
   src/providers/             ← Provider trait, input resolution, cancellation, catalog validation
   src/providers/pixverse/    ← PixVerse provider: task → CLI argv, execution, legacy argv nodes
   src/providers/fal/         ← fal.ai provider: queue API, uploads, downloads
+  src/providers/comfyui/     ← ComfyUI provider: workflow bindings, /prompt, /history, uploads
   src/providers/secrets.rs   ← Provider API keys (macOS Keychain)
   src/ffmpeg.rs              ← ffmpeg node execution
   src/thumbs.rs              ← Result parsing & thumbnail download

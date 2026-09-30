@@ -84,6 +84,7 @@ function mcpTaskSettings(node) {
     provider: node.provider,
     ...(node.model ? { model: node.model } : {}),
     params: { ...(node.params || {}), ...(node.provider_params || {}) },
+    ...(node.workflow ? { workflow: comfyBindingSummary(node.workflow) } : {}),
   };
 }
 
@@ -122,6 +123,33 @@ function mcpMakeId(graph, prefix) {
   return id;
 }
 
+// ComfyUI nodes: `workflow` (API-format JSON, object or string) imports a
+// workflow with suggested bindings; `bindings` overrides some of them;
+// `workflow_name` renames it. Returns { node } or { error }.
+function mcpApplyWorkflow(node, p) {
+  if (!providerManifest(node.provider)?.workflow) {
+    return { error: `workflow / bindings only apply to comfyui.workflow nodes, not ${node.capability}` };
+  }
+  let graph = node.workflow?.graph;
+  let bindings = node.workflow?.bindings;
+  if (p.workflow !== undefined) {
+    const parsed = parseComfyWorkflow(p.workflow);
+    if (parsed.error) return { error: parsed.error };
+    graph = parsed.graph;
+    bindings = suggestComfyBindings(graph);
+  }
+  if (!graph) return { error: 'pass params.workflow (the ComfyUI workflow in API format) first' };
+  if (p.bindings !== undefined) {
+    if (!p.bindings || typeof p.bindings !== 'object') return { error: 'bindings must be an object' };
+    bindings = { ...bindings, ...p.bindings };
+  }
+  const name = typeof p.workflow_name === 'string' ? p.workflow_name : (node.workflow?.name || 'workflow');
+  const workflow = makeComfyWorkflow(graph, { name, bindings });
+  const problem = checkComfyBindings(workflow);
+  if (problem) return { error: problem };
+  return { node: withComfyWorkflow(node, workflow) };
+}
+
 // Apply agent params onto a (copy of a) node. Shared by add_node/set_params.
 // Returns { node } or { error }.
 function mcpApplyParams(node, params) {
@@ -152,6 +180,11 @@ function mcpApplyParams(node, params) {
   if (n.kind === 'select' && Number.isFinite(p.selected_index)) {
     n.selectedIndex = p.selected_index;
   }
+  if (n.kind === 'task' && ['workflow', 'workflow_name', 'bindings'].some(k => k in p)) {
+    const imported = mcpApplyWorkflow(n, p);
+    if (imported.error) return { error: imported.error };
+    n = imported.node;
+  }
   if (n.kind === 'task') {
     if (n.provider_params?._raw_args) {
       const settings = Object.keys(p).filter(k => !['title', 'prompt'].includes(k));
@@ -159,7 +192,8 @@ function mcpApplyParams(node, params) {
         return { error: `node "${n.id}" runs a hand-edited command; reset it in the Inspector before changing ${settings.join(', ')}` };
       }
     } else {
-      const applied = applyTaskParams(n, p);
+      const settings = Object.fromEntries(Object.entries(p).filter(([k]) => !['workflow', 'workflow_name', 'bindings'].includes(k)));
+      const applied = applyTaskParams(n, settings);
       if (applied.error) return { error: applied.error };
       // Keep a title the agent set explicitly over the derived one.
       n = { ...applied.node, ...(typeof p.title === 'string' && p.title ? { title: p.title } : {}) };
@@ -393,10 +427,16 @@ async function mcpSetParams(args, stateRef, dispatch) {
   if (found.error) return { error: found.error };
   const applied = mcpApplyParams(found.node, args.params);
   if (applied.error) return { error: applied.error };
-  dispatch({ type: 'PATCH_GRAPH', fn: g => ({
-    ...g,
-    nodes: g.nodes.map(n => (n.id === args.node_id ? { ...applied.node, x: n.x, y: n.y } : n)),
-  })});
+  // A new workflow can change the node's ports: keep the edges that still fit.
+  const reworked = ['workflow', 'bindings'].some(k => k in (args.params || {}));
+  dispatch({ type: 'PATCH_GRAPH', fn: g => {
+    const current = g.nodes.find(n => n.id === args.node_id);
+    if (!current) return g;
+    const next = { ...applied.node, x: current.x, y: current.y };
+    return reworked
+      ? replaceNodeKeepingEdges(g, next)
+      : { ...g, nodes: g.nodes.map(n => (n.id === args.node_id ? next : n)) };
+  }});
   await mcpFlush();
   const proj = mcpActiveProject(stateRef.current);
   const node = nodeById(proj.graph, args.node_id) || applied.node;

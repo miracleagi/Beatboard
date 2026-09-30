@@ -7,7 +7,9 @@
 // Inspector and palette work, and that MCP calls from older agents (short type
 // names such as `video`, old param names such as `quality`) keep working.
 // It also covers fal.ai: switching a node's provider and model, the API-key
-// flow in Config, and MCP validation against per-model constraints.
+// flow in Config, and MCP validation against per-model constraints; and
+// ComfyUI: importing a workflow (MCP and Inspector), bindings → ports, and
+// the server address in Config.
 //
 //   node scripts/e2e/ui-mcp-smoke.mjs
 //
@@ -63,6 +65,8 @@ window.__runNode = async ({ node, runId }) => {
   if (node.kind !== 'task') return { ok: true };
   const kind = node.capability.startsWith('video') ? 'video' : 'image';
   const thumb = { type: kind, path: '/tmp/' + node.id + (kind === 'video' ? '.mp4' : '.png'), url: '/tmp/' + node.id, chosen: true };
+  window.__lastNode = node;
+  if (node.provider === 'comfyui') return { ok: true, provider: 'comfyui', thumbs: [{ ...thumb, label: 'sdxl · seed 7' }] };
   if (node.provider === 'fal') {
     (window.__listeners['job:' + runId] || []).forEach(fn => fn({ payload: { request_id: 'req-' + node.id, status_url: 's', response_url: 'r', cancel_url: 'c', output: kind === 'video' ? 'video' : 'images', model: node.model } }));
     await new Promise(r => setTimeout(r, 50));
@@ -203,7 +207,7 @@ check('mcp refuses editing raw node', !!rawEdit.error, rawEdit);
 
 // 3. Palette is grouped by capability.
 const paletteText = await page.evaluate(() => document.body.innerText);
-check('palette groups', ['IMAGE', 'VIDEO', 'AUDIO', 'EFFECTS'].every(x => paletteText.includes(x)) && paletteText.includes('Generate video') && !paletteText.includes('PixVerse · video'), null);
+check('palette groups', ['IMAGE', 'VIDEO', 'AUDIO', 'EFFECTS', 'LOCAL'].every(x => paletteText.includes(x)) && paletteText.includes('Generate video') && !paletteText.includes('PixVerse · video'), null);
 
 // 4. Inspector on the migrated node.
 await selectNode('v1');
@@ -361,6 +365,92 @@ await page.waitForTimeout(300);
 const g3 = await mcp('get_graph');
 const uiPick = g3.nodes.find(n => n.type === 'pick' && n.id !== cmp.pick_node_id);
 check('inspector comparison built', !!uiPick && g3.edges.filter(e => e.to === uiPick.id).length === 2 && g3.nodes.some(n => n.model === 'hailuo-02-standard'), uiPick);
+
+// 17. ComfyUI: import a workflow through MCP, rebind, run for free.
+const comfyGraph = {
+  3: { class_type: 'KSampler', inputs: { seed: 42, steps: 20, cfg: 7, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['12', 0] } },
+  4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'sd_xl_base_1.0.safetensors' } },
+  6: { class_type: 'CLIPTextEncode', inputs: { text: 'a castle', clip: ['4', 1] }, _meta: { title: 'Positive' } },
+  7: { class_type: 'CLIPTextEncode', inputs: { text: 'blurry', clip: ['4', 1] }, _meta: { title: 'Negative' } },
+  8: { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
+  9: { class_type: 'SaveImage', inputs: { filename_prefix: 'ComfyUI', images: ['8', 0] } },
+  10: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'Reference' } },
+  12: { class_type: 'VAEEncode', inputs: { pixels: ['10', 0], vae: ['4', 2] } },
+  20: { class_type: 'PreviewImage', inputs: { images: ['8', 0] } },
+};
+const comfy = await mcp('add_node', { type: 'comfyui', params: { workflow: JSON.stringify(comfyGraph), workflow_name: 'sdxl img2img', seed: 7 } });
+check('mcp imports a ComfyUI workflow', comfy.ok && comfy.type === 'comfyui.workflow' && comfy.provider === 'comfyui' && comfy.params.seed === 7
+  && comfy.inputs.join() === 'prompt,Reference' && comfy.workflow?.prompt === '#6 Positive.text' && comfy.workflow?.negative === '#7 Negative.text'
+  && comfy.workflow?.output === '#9 SaveImage' && comfy.workflow?.seed?.[0] === '#3 KSampler.seed' && comfy.title === 'ComfyUI · sdxl img2img', comfy);
+const uiFormat = await mcp('add_node', { type: 'comfyui', params: { workflow: { nodes: [], links: [] } } });
+check('mcp explains the editor format', !!uiFormat.error && uiFormat.error.includes('Export (API)'), uiFormat);
+const badBinding = await mcp('set_params', { node_id: comfy.node_id, params: { bindings: { prompt: { node: '3', input: 'positive' } } } });
+check('mcp rejects a binding onto a wired input', !!badBinding.error && badBinding.error.includes('wired'), badBinding);
+const notComfy = await mcp('set_params', { node_id: falImg.node_id, params: { workflow: comfyGraph } });
+check('workflow only on ComfyUI nodes', !!notComfy.error, notComfy);
+await mcp('connect_nodes', { from_node: 'p0', to_node: comfy.node_id, to_port: 'prompt' });
+const imgEdge = await mcp('connect_nodes', { from_node: 'f1', to_node: comfy.node_id, to_port: 'Reference' });
+const seedless = await mcp('set_params', { node_id: comfy.node_id, params: { count: 2 } });
+check('count allowed with a seed input', seedless.ok && seedless.params.count === 2, seedless);
+const rebound = await mcp('set_params', { node_id: comfy.node_id, params: { bindings: { inputs: [], seed: [] } } });
+let g4 = await mcp('get_graph');
+const comfyEdges = g4.edges.filter(e => e.to === comfy.node_id);
+check('rebinding drops the unbound port and its edge only', imgEdge.ok && rebound.ok && comfyEdges.length === 1 && comfyEdges[0].from === 'p0' && comfyEdges[0].to_port === 'prompt'
+  && rebound.params.seed === undefined && rebound.params.count === undefined, { rebound, comfyEdges });
+const comfyRun = await mcp('run_node', { node_id: comfy.node_id });
+await page.waitForTimeout(400);
+const comfyResult = await mcp('get_node_result', { node_id: comfy.node_id });
+const sentNode = await page.evaluate(() => window.__lastNode);
+check('ComfyUI run is not a paid generation', comfyRun.ok && !comfyRun.needs_user_confirmation && !comfyRun.paid_generations && comfyResult.state === 'done', { comfyRun, comfyResult });
+check('run sends the workflow to Rust', sentNode?.provider === 'comfyui' && sentNode.workflow?.graph?.['10']?.class_type === 'LoadImage' && sentNode.workflow.bindings.inputs.length === 0, sentNode?.workflow?.bindings);
+const localNotCounted = await page.evaluate(() => paidRunSummary({ nodes: [
+  { id: 'c', kind: 'task', provider: 'comfyui', capability: 'comfyui.workflow' },
+  { id: 'f', kind: 'task', provider: 'fal', capability: 'image.generate' }] }, ['c', 'f']));
+check('paid-run count skips local providers', localNotCounted.total === 1 && !localNotCounted.byProvider.comfyui, localNotCounted);
+
+// 18. ComfyUI in the Inspector: paste a workflow into a fresh node.
+const fresh = await mcp('add_node', { type: 'comfyui.workflow', x: 60, y: 560 });
+await selectNode(fresh.node_id);
+text = await page.evaluate(() => document.body.innerText);
+check('empty ComfyUI node asks for a workflow', text.includes('Export (API)') && text.includes('Import workflow…') && !text.includes('Compare with other models…'), null);
+await inspectorClick('Paste JSON');
+await page.locator('[data-testid="comfy-paste"]').fill('{"nodes": [], "links": []}');
+await inspectorClick('Use this workflow');
+await page.waitForTimeout(200);
+text = await page.evaluate(() => document.body.innerText);
+check('Inspector explains the editor format', text.includes('This is the ComfyUI editor format'), null);
+await page.locator('[data-testid="comfy-paste"]').fill(JSON.stringify(comfyGraph));
+await inspectorClick('Use this workflow');
+await page.waitForTimeout(300);
+await shot('inspector-comfyui');
+let freshNode = (await mcp('get_graph')).nodes.find(n => n.id === fresh.node_id);
+text = await page.evaluate(() => document.body.innerText);
+check('Inspector import suggests bindings', freshNode.inputs?.join() === 'prompt,Reference' && text.includes('PROMPT GOES TO') && text.includes('RESULT')
+  && text.includes('SEED') && await page.locator('[data-testid="comfy-prompt"]').inputValue() === '6|text', freshNode);
+await page.locator('[data-testid="comfy-output"]').selectOption('20');
+await page.locator('[data-testid="comfy-prompt"]').selectOption('');
+await page.waitForTimeout(300);
+freshNode = (await mcp('get_graph')).nodes.find(n => n.id === fresh.node_id);
+check('Inspector rebinding updates ports and output', freshNode.inputs?.join() === 'Reference' && freshNode.workflow?.output === '#20 PreviewImage' && freshNode.workflow?.prompt === null, freshNode);
+const saved2 = await page.evaluate(() => window.__saved.at(-1));
+const savedFresh = saved2.projects.find(p => p.graph.nodes.some(n => n.id === fresh.node_id)).graph.nodes.find(n => n.id === fresh.node_id);
+check('workflow saved with the project', savedFresh.workflow?.graph?.['9']?.class_type === 'SaveImage' && savedFresh.workflow.bindings.output === '20' && savedFresh.workflow.name === 'workflow', savedFresh.workflow?.bindings);
+
+// 19. ComfyUI server address in Config.
+await page.getByText('Config', { exact: true }).first().click();
+await page.waitForTimeout(300);
+text = await page.evaluate(() => document.body.innerText);
+check('Config shows the ComfyUI server', text.includes('COMFYUI SERVER') && await page.locator('[data-testid="comfyui-url"]').getAttribute('placeholder') === 'http://127.0.0.1:8188', null);
+await page.locator('[data-testid="comfyui-url"]').fill('192.168.1.20:8188');
+await page.locator('[data-testid="comfyui-url"]').press('Enter');
+text = await page.evaluate(() => document.body.innerText);
+check('Config rejects an address without a scheme', text.includes('must start with http://'), null);
+await page.locator('[data-testid="comfyui-url"]').fill('http://192.168.1.20:8188');
+await page.locator('[data-testid="comfyui-url"]').press('Enter');
+await page.getByText('Done', { exact: true }).click();
+await page.waitForTimeout(1500);
+const saved3 = await page.evaluate(() => window.__saved.at(-1));
+check('ComfyUI server saved in config', saved3.config.comfyuiUrl === 'http://192.168.1.20:8188', saved3.config);
 
 // 11. Clicking a palette entry adds a task node (last: it may land on top of other nodes).
 const before = (await mcp('get_graph')).nodes.length;

@@ -42,7 +42,8 @@ inputs into generator ports → run_node → poll get_node_result until 'done', 
 then use the returned local file paths. Generation runs on a cloud provider — PixVerse, or \
 fal.ai (set params.provider = \"fal\"; the user must have saved a fal.ai API key in Config, \
 and each run is billed to their fal account) — and takes 1–5 minutes per node; \
-ffmpeg_compose concatenates videos locally. \
+ffmpeg_compose concatenates videos locally, and `comfyui.workflow` nodes run the user's own \
+ComfyUI workflow on their ComfyUI server (free; pass the API-format workflow as params.workflow). \
 The user can also edit and run the canvas themselves at any time.";
 
 // ─── Pending-op registry (HTTP thread ⇄ frontend round trip) ─────────────────
@@ -91,7 +92,12 @@ fn tool_definitions() -> Value {
             supporting the capability), `model`, and the capability's params exactly as listed by \
             describe_capabilities (e.g. `resolution`, `aspect_ratio`, `duration_s`, `count`, `seed`, \
             `audio`, `off_peak`, `timeout`). Legacy names `quality`, `duration` and \
-            `duration_seconds` are still accepted. Unknown keys are rejected."
+            `duration_seconds` are still accepted. Unknown keys are rejected. \
+            `comfyui.workflow` nodes: `workflow` (the ComfyUI workflow in API format, as an object or \
+            JSON string — which inputs take the prompt, seed, images and which node is the output are \
+            suggested automatically and returned), optional `workflow_name`, and `bindings` to override \
+            them: { prompt: {node, input} | null, negative: {node, input} | null, seed: [{node, input}], \
+            inputs: [{node, input, kind}], output: node id | null }; node ids are strings."
     });
     let mut node_types: Vec<String> = ["prompt", "asset", "pick", "ffmpeg_compose", "output"]
         .map(String::from)

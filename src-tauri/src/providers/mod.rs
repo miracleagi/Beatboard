@@ -7,6 +7,7 @@
 
 pub mod cancel;
 pub mod catalog;
+pub mod comfyui;
 pub mod fal;
 pub mod inputs;
 pub mod pixverse;
@@ -127,11 +128,13 @@ pub trait Provider: Send + Sync {
 
 static PIXVERSE: pixverse::PixVerseProvider = pixverse::PixVerseProvider;
 static FAL: fal::FalProvider = fal::FalProvider;
+static COMFYUI: comfyui::ComfyUIProvider = comfyui::ComfyUIProvider;
 
 pub fn provider(id: &str) -> Option<&'static dyn Provider> {
     match id {
         "pixverse" => Some(&PIXVERSE),
         "fal" => Some(&FAL),
+        "comfyui" => Some(&COMFYUI),
         _ => None,
     }
 }
@@ -178,7 +181,9 @@ pub async fn resume_task(node: Value, job: Value, ctx: RunCtx) -> Result<Value, 
 /// What a task node would execute, with each input shown as `<port label>`.
 pub fn preview_task(node: &Value) -> Result<Vec<String>, String> {
     let provider = node_provider(node)?;
-    let mut req = inputs::task_request(node, &[]).map_err(|e| e.to_string())?;
+    let mut req = provider
+        .build_request(node, &[])
+        .map_err(|e| e.to_string())?;
     if let Some(raw) = req.provider_params.get("_raw_args") {
         return serde_json::from_value(raw.clone()).map_err(|e| e.to_string());
     }

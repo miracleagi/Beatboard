@@ -1,0 +1,28 @@
+{
+  "id": "comfyui",
+  "name": "ComfyUI",
+  "auth": "local",
+  "local": true,
+  "workflow": true,
+  "strict": true,
+  "server_hint": "Address of your ComfyUI server — runs on your machine, nothing is billed",
+  "default_server": "http://127.0.0.1:8188",
+  "models": {},
+  "param_defs": {
+    "seed": { "bucket": "params", "label": "seed", "type": "int", "min": 0, "max": 9007199254740991, "section": "Generation", "needs_binding": "seed", "placeholder": "random each run" },
+    "count": { "bucket": "params", "label": "count", "type": "int", "min": 1, "max": 8, "default": 1, "section": "Generation", "needs_binding": "seed" },
+    "negative_prompt": { "bucket": "provider_params", "label": "negative prompt", "type": "string", "section": "Generation", "needs_binding": "negative" }
+  },
+  "capabilities": {
+    "comfyui.workflow": {
+      "models": [],
+      "initial": { "params": {}, "provider_params": {} },
+      "help": "Runs your own ComfyUI workflow on your ComfyUI server. In ComfyUI use Workflow → Export (API), import the file here, then check which node takes the prompt, which take the connected images, and which is the output. The workflow's own values are used for anything left unconnected.",
+      "params": [
+        { "key": "seed" },
+        { "key": "count" },
+        { "key": "negative_prompt" }
+      ]
+    }
+  }
+}

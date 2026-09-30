@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 const CAPABILITIES_JSON: &str = include_str!("../../../src/providers/capabilities.json");
 const PIXVERSE_JSON: &str = include_str!("../../../src/providers/pixverse.json");
 const FAL_JSON: &str = include_str!("../../../src/providers/fal.json");
+const COMFYUI_JSON: &str = include_str!("../../../src/providers/comfyui.json");
 
 fn parsed(cell: &'static OnceLock<Value>, source: &str, name: &str) -> &'static Value {
     cell.get_or_init(|| {
@@ -30,12 +31,16 @@ pub fn capabilities() -> &'static Map<String, Value> {
 pub fn manifests() -> &'static [Value] {
     static LIST: OnceLock<Vec<Value>> = OnceLock::new();
     LIST.get_or_init(|| {
-        [("pixverse.json", PIXVERSE_JSON), ("fal.json", FAL_JSON)]
-            .into_iter()
-            .map(|(name, source)| {
-                serde_json::from_str(source).unwrap_or_else(|e| panic!("invalid {name}: {e}"))
-            })
-            .collect()
+        [
+            ("pixverse.json", PIXVERSE_JSON),
+            ("fal.json", FAL_JSON),
+            ("comfyui.json", COMFYUI_JSON),
+        ]
+        .into_iter()
+        .map(|(name, source)| {
+            serde_json::from_str(source).unwrap_or_else(|e| panic!("invalid {name}: {e}"))
+        })
+        .collect()
     })
 }
 
@@ -246,6 +251,8 @@ pub fn describe(capability: Option<&str>) -> Result<Value, String> {
                 Some(json!({
                     "provider": provider,
                     "auth": m["auth"],
+                    "local": m["local"] == true,
+                    "workflow": m["workflow"] == true,
                     "models": entry["models"],
                     "model_params": model_params,
                     "default_model": entry["initial"]["model"],

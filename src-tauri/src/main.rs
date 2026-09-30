@@ -78,6 +78,13 @@ fn preview_task(node: Value) -> Result<Vec<String>, String> {
     providers::preview_task(&node)
 }
 
+/// Check the ComfyUI server in the config answers (Config → ComfyUI server).
+#[tauri::command]
+async fn comfyui_status(config: Value) -> Result<Value, String> {
+    let base = providers::comfyui::server_url(&config).map_err(|e| e.to_string())?;
+    providers::comfyui::system_stats(base).await
+}
+
 /// Stop a running node. Kills the local PixVerse / ffmpeg process; a task
 /// already submitted to a cloud provider may still complete (and be billed)
 /// on the provider side.
@@ -309,6 +316,7 @@ fn main() {
             run_node,
             cancel_run,
             preview_task,
+            comfyui_status,
             resume_task,
             providers::secrets::provider_secret_status,
             providers::secrets::set_provider_secret,

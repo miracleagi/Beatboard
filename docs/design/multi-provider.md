@@ -300,7 +300,7 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 | **P0 重构（✅ 已完成，见第 13 节）** | `providers/` 骨架、`Provider` trait；把 PixVerse 实现迁到 trait 之后；`inputs.rs` 和 `media.rs` 抽离；`kind:'task'` 与迁移函数；取消机制（`cancel_run`） | Stop 真正能中止任务；除此之外没有其他变化 | 黄金测试全部通过；现有 6 个 Rust 测试通过；3 个内置场景手动跑通 |
 | **P1 声明驱动（✅ 已完成，见第 14 节）** | manifest 与 `list_providers`；`<TaskInspector>` 取代各 PV Inspector；MCP 增加别名、`describe_capabilities` 和动态 schema；Config 面板改为 Providers 列表；删除 `config.apiKeys` 等遗留字段 | 调色板按能力分组；Inspector 统一样式 | `editor-panels.jsx` 净减少约 600 行以上；MCP 旧客户端调用全部兼容（加回归测试） |
 | **P2 第二个供应商（✅ 已完成，见第 15 节）** | Keychain 密钥存储；`jobs.rs`；fal 供应商（先做 `image.generate` 和 `video.generate`，再扩展）；本地文件上传；跨供应商使用媒体时的 ref 与上传回退 | 同一张图里可以混用 PixVerse 和 fal 节点 | 端到端测试：fal 生图 → PixVerse 图生视频 → ffmpeg 拼接 |
-| **P3 跨供应商能力（🟡 对比、花费控制、恢复已完成；ComfyUI 待定，见第 16 节）** | "一键对比"（把一个节点复制到 N 个供应商或模型，结果汇入 Pick）；运行前成本估算与预算上限；任务 job_id 持久化，重启后可恢复轮询；ComfyUI 本地供应商 | 对比、成本、恢复 | — |
+| **P3 跨供应商能力（✅ 已完成，见第 16、17 节）** | "一键对比"（把一个节点复制到 N 个供应商或模型，结果汇入 Pick）；运行前成本估算与预算上限；任务 job_id 持久化，重启后可恢复轮询；ComfyUI 本地供应商 | 对比、成本、恢复 | — |
 
 各阶段都能独立发布。P0 完成后不引入任何新依赖，只修复了中止问题，风险最低。
 
@@ -495,6 +495,50 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 
 ### 尚未做
 
-- **ComfyUI 本地供应商**：工作流怎么定义，需要先定下产品方案。
 - **运行前的价格估算**：理由见上文"花费控制"。
 
+## 17. P3 实施记录（第二部分）：ComfyUI 本地供应商
+
+### 产品方案
+
+用户导入**自己的**工作流，而不是由 Beatboard 内置工作流模板。理由：ComfyUI 用户手里本来就有调好的工作流，模型文件、自定义节点都因人而异，内置模板很难在别人的机器上直接跑通。
+
+- **新能力 `comfyui.workflow`**（调色板分组"Local"），只有 `comfyui` 一个供应商。没有挂到 `image.generate` / `video.generate` 下面，因为 ComfyUI 节点的端口由工作流决定，和这些能力的固定端口对不上；切换供应商或"一键对比"会把端口弄乱。
+- **导入**：ComfyUI 中选 Workflow → Export (API)，在 Inspector 里选文件或粘贴 JSON。导入的是编辑器格式（有 `nodes` 和 `links`）时，会提示改用 Export (API)。
+- **绑定**（自动建议，可在 Inspector 修改）：
+  - 提示词、反向提示词：沿 KSampler 一类节点的 `positive` / `negative` 连线找到文本输入；找不到时按节点标题猜。
+  - 种子：所有 `seed` / `noise_seed` 数值输入。
+  - 输入：LoadImage、LoadVideo、VHS_LoadVideo、LoadAudio 等加载节点，每个对应一个输入端口（slot 为 `in@<节点 id>`）。
+  - 结果：第一个 Save 类节点；也可以选"every saved file"。
+- **未连接的输入沿用工作流里保存的值**（例如原来的参考图、原来的提示词文字）。
+- **参数**：`seed`（留空则每次随机）、`count`（排队 N 个提示，种子依次加 1）、`negative_prompt`。这三个参数标了 `needs_binding`，工作流里没有对应输入时不显示，也不接受。
+- **服务器地址**：Config → ComfyUI server，默认 `http://127.0.0.1:8188`；"Test" 调用 `/system_stats`。
+- **不计入付费次数**：清单里 `local: true`，花费确认弹窗不统计它。
+
+### 实现
+
+- **前端**：`src/comfyui-workflow.jsx`（纯 JS，同 `task-model.jsx` 的写法）负责解析、建议绑定、生成端口；工作流存在节点的 `workflow` 字段里（`{ name, graph, bindings, output_kind }`），随项目一起保存。重新绑定会重建端口，`replaceNodeKeepingEdges` 按 slot 保留仍然有效的连线，其余删除。
+- **Rust**（`src-tauri/src/providers/comfyui/`）：
+  - `build_request` 把节点的 `workflow` 作为内部参数 `_workflow` 传给 `plan`；`plan` 是纯函数，检查绑定是否指向存在、且没有被连线占用的输入，然后填入提示词、种子和上传后的文件名。
+  - 协议：`POST /upload/image`（文件按内容哈希命名，同一文件只存一份）、`POST /prompt`、轮询 `GET /history/{id}` 和 `GET /queue`、`GET /view` 下载结果。
+  - **Stop**：从队列删除还没开始的提示（`POST /queue {delete}`）；只有我们的提示正在运行时才调用 `POST /interrupt`，不会打断共享服务器上别人的任务。
+  - **恢复**：提交后通过 `job:` 事件记录服务器地址和 prompt id，重启后可用 Resume 取回，不会重新提交。服务器重启、任务丢失时会报错，而不是一直等待。
+  - 错误信息：`/prompt` 被拒时列出每个节点的错误（例如缺少模型文件）；运行失败时给出出错的节点和异常信息；结果为空时提示可能是 ComfyUI 用了缓存（种子固定且输入没变）。
+- **MCP**：`add_node` / `set_params` 接受 `workflow`（API 格式 JSON）、`workflow_name` 和 `bindings`；返回值里有绑定摘要。`describe_capabilities` 标明 `local` 和 `workflow`。
+
+### 测试
+
+- **Rust**：新增 15 个，共 61 个。用 tiny_http 模拟 ComfyUI 服务器，覆盖：上传、每个种子一个提示、等待与下载；失败节点的错误信息；Stop 只打断自己的提示；用保存的 job 在新客户端中恢复且只提交一次；任务丢失；服务器连不上时的提示；从任务节点到 plan 的完整路径（上游 fal 图片接入 LoadImage）；Inspector 预览。
+- **端到端**：从 47 项增加到 64 项，覆盖 MCP 导入、编辑器格式的提示、非法绑定、重新绑定后端口和连线的变化、运行不计入付费次数、工作流随运行传到 Rust、Inspector 粘贴导入与改绑定、项目保存、Config 中的服务器地址。
+- **验证测试有效**：分别把"本地供应商不计入付费"、"重新绑定时删除失效连线"、"只打断自己的提示"、"把工作流传给 plan"改坏，对应测试都会失败。
+
+### 实施中的发现
+
+- **前端各文件共用同一个全局作用域**：页面用浏览器端的 Babel 转译每个 `text/babel` 脚本，`const { a, ...rest } = obj` 会被转成顶层的 `var _excluded = ["a"]`，而后加载的文件会覆盖先加载文件的 `_excluded`。结果是 `rest` 去掉的是别的文件的键。这个问题在本次之前就存在（影响 `executionNodeSignature` 等），单独修复，见下一个提交。
+
+### 局限
+
+- **没有连接真实的 ComfyUI 服务器测试过**（这里无法运行 ComfyUI）。协议按 ComfyUI 的 `server.py` 实现，用模拟服务器验证；新版 ComfyUI 的 `/interrupt` 支持按 prompt id 打断，旧版会忽略这个参数，所以只在确认是我们的提示在运行时才调用。
+- **没有逐步进度**：ComfyUI 的采样进度要通过 websocket 获取，目前进度条只按排队、运行、完成估算。
+- **不能和云端模型"一键对比"**：原因见上文；以后可以做"把 ComfyUI 节点的端口映射到 `image.generate` 端口"再支持。
+- 只支持无需登录的 ComfyUI 服务器。
