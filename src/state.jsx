@@ -90,6 +90,16 @@ function paletteTemplates() {
   return [...inputs, ...generatorTemplates(), ...rest];
 }
 
+// A copy of `obj` without `keys`, plus `extra`. Use this instead of
+// `const { a, ...rest } = obj`: every src/*.jsx file is compiled by in-page
+// Babel into the same global scope, and object rest compiles to a top-level
+// `var _excluded = [...]` that the next file overwrites.
+function withoutKeys(obj, keys, extra) {
+  const out = { ...(obj || {}) };
+  keys.forEach(key => { delete out[key]; });
+  return extra ? { ...out, ...extra } : out;
+}
+
 // ---------- STORAGE ABSTRACTION ----------
 // Replace `LocalStorage` with a Tauri / Electron file-system adapter later. The
 // shape stays the same; the editor never touches the impl directly.
@@ -274,10 +284,7 @@ const Executor = window.AtlasExecutor || MockExecutor;
 function makeDefaultProjects() {
   // Use the scenarios but strip baked execution states so they're fresh.
   const cleanGraph = (sc) => normalizeGraphPorts({
-    nodes: sc.nodes.map(n => {
-      const { state, progress, ...rest } = n;
-      return rest;
-    }),
+    nodes: sc.nodes.map(n => withoutKeys(n, ['state', 'progress'])),
     edges: sc.edges.map(e => ({ ...e })),
   });
   return [
@@ -742,10 +749,7 @@ function normalizeGraphPorts(graph) {
 
 function executionNodeSignature(node) {
   if (!node) return '';
-  const {
-    x, y, w, title, badge, footer, state, progress,
-    ...executionFields
-  } = node;
+  const executionFields = withoutKeys(node, ['x', 'y', 'w', 'title', 'badge', 'footer', 'state', 'progress']);
   // Generated previews are cached output, not node configuration. Asset
   // thumbs are user inputs and therefore must participate in invalidation.
   if (node.kind !== 'asset') delete executionFields.thumbs;

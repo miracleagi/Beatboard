@@ -39,7 +39,7 @@ function NewProjectModal({ t, onConfirm, onCancel }) {
     if (kind !== 'blank') {
       const sc = { iterate: SCENARIO_ITERATE, batch: SCENARIO_BATCH, assembly: SCENARIO_ASSEMBLY }[kind];
       if (sc) graph = {
-        nodes: sc.nodes.map(({ state, progress, ...rest }) => rest),
+        nodes: sc.nodes.map(n => withoutKeys(n, ['state', 'progress'])),
         edges: sc.edges.map(e => ({ ...e })),
       };
     }
@@ -1510,8 +1510,7 @@ function ResumeJob({ t, node, job, project, state, dispatch }) {
     const res = await window.AtlasExecutor.resumeNode(node, job, { config: state.config }, setProgress);
     setProgress(null);
     if (res?.ok) {
-      const { ok, ...rest } = res;
-      setResult({ ...rest, state: 'done', progress: 1 });
+      setResult(withoutKeys(res, ['ok'], { state: 'done', progress: 1 }));
     } else {
       // Keep the job so a transient failure can be retried.
       setResult({ state: 'interrupted', progress: 0, job, error: res?.error || 'resume failed' });

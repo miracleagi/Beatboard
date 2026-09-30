@@ -167,8 +167,7 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
         break;
       }
       if (res?.ok) {
-        const { ok, ...result } = res;
-        const doneResult = { ...result, state: 'done', progress: 1 };
+        const doneResult = withoutKeys(res, ['ok'], { state: 'done', progress: 1 });
         if (nodeHasUsableOutput(node, doneResult)) {
           ref.current.results[id] = doneResult;
           // ↓ Persist immediately so the node shows its preview right away

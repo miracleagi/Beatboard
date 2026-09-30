@@ -211,7 +211,9 @@ function parsePixVerseArgs(args, spec, sub, ports) {
 }
 
 function taskBase(node) {
-  const { cli, provider, model, quality, aspectRatio, count, duration, audio, offPeak, timeout, ...rest } = node;
+  const rest = { ...node };
+  ['cli', 'provider', 'model', 'quality', 'aspectRatio', 'count', 'duration', 'audio', 'offPeak', 'timeout']
+    .forEach(key => { delete rest[key]; });
   return rest;
 }
 

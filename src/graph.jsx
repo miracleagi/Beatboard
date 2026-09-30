@@ -225,7 +225,9 @@ const CliHybrid = ({ t, cmd, args = [], fields = [] }) => (
   </div>
 );
 
-const CliBlock = ({ style, ...props }) => {
+const CliBlock = (allProps) => {
+  const { style } = allProps;
+  const props = withoutKeys(allProps, ['style']);
   if (style === 'form') return <CliForm {...props}/>;
   if (style === 'hybrid') return <CliHybrid {...props}/>;
   return <CliTerminal {...props}/>;

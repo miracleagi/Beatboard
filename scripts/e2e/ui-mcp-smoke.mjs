@@ -189,6 +189,16 @@ const saved = await page.evaluate(() => window.__saved.at(-1));
 check('saved config cleaned', saved && JSON.stringify(saved.config) === JSON.stringify({ binPaths: { ffmpeg: '', pixverse: '/opt/pv' }, paidRunLimit: 3 }), saved?.config);
 check('saved nodes are task nodes', saved && saved.projects[0].graph.nodes.filter(n => n.kind === 'task').length === 3 && !JSON.stringify(saved).includes('sk-secret'), null);
 
+// Object rest (`const { a, ...rest } = x`) must not be used in src/*.jsx: the
+// files share one global scope and Babel's `_excluded` helper var collides.
+const sig = await page.evaluate(() => [
+  executionNodeSignature({ id: 'n', kind: 'task', model: 'a', x: 1, y: 2, title: 't1' }),
+  executionNodeSignature({ id: 'n', kind: 'task', model: 'a', x: 9, y: 8, title: 't2' }),
+  executionNodeSignature({ id: 'n', kind: 'task', model: 'b', x: 1, y: 2, title: 't1' }),
+]);
+check('moving or renaming a node keeps its results', sig[0] === sig[1] && sig[0] !== sig[2], sig);
+check('migrated nodes drop legacy fields', saved && saved.projects[0].graph.nodes.filter(n => n.kind === 'task').every(n => !('cli' in n) && !('quality' in n)), saved?.projects[0].graph.nodes.map(n => Object.keys(n)));
+
 // 2. MCP: legacy type aliases and param names, validation.
 const add = await mcp('add_node', { type: 'video', params: { quality: '1080p', duration: '8', audio: false, model: 'kling-3.0-pro' } });
 check('mcp add_node alias + legacy params', add.ok && add.type === 'video.generate' && add.params.resolution === '1080p' && add.params.duration_s === 8 && add.params.audio === false && add.model === 'kling-3.0-pro' && add.inputs.join() === 'src,prompt', add);

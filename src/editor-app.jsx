@@ -123,9 +123,8 @@ function App() {
   // ── Autosave (debounced) on any state change ─────────────────────────────────
   const saveTimer = React.useRef(null);
   const doSave = React.useCallback(() => {
-    const { ui, ...rest } = stateRef.current;
     try {
-      Promise.resolve(Storage.save({ ...rest, ui: { /* leave empty */ } }))
+      Promise.resolve(Storage.save({ ...stateRef.current, ui: { /* leave empty */ } }))
         .catch((e) => console.warn('storage save failed', e));
     } catch (e) {
       console.warn('storage save failed', e);
