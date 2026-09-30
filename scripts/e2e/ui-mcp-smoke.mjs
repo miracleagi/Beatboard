@@ -560,6 +560,38 @@ const wfVsWf = await mcp('compare_node', { node_id: comfy.node_id, variants: [{ 
 const g7 = await mcp('get_graph');
 const wfC = g7.nodes.find(n => n.id === wfVsWf.variant_node_ids?.[0]);
 check('ComfyUI compared with another workflow', wfVsWf.ok && wfC?.workflow?.name === 'renamed later' && g7.edges.some(e => e.to === wfC.id && e.from === 'p0' && e.to_port === 'prompt'), { wfVsWf, wfC });
+// The active project's graph as last autosaved.
+const liveGraph = async () => {
+  await page.waitForTimeout(1200);
+  const saved = await page.evaluate(() => window.__saved.at(-1));
+  return saved.projects.find(p => p.id === saved.activeProjectId).graph;
+};
+// A copy never shares the source's workflow object: mutate the source in
+// place (as any future in-place edit would) and the copy must not change.
+const aliasing = await page.evaluate(([g, srcId, fromId]) => {
+  const graph = JSON.parse(JSON.stringify(g));
+  const result = buildComparison(graph, fromId, [{ provider: 'comfyui', workflow_node: srcId }]);
+  const copy = result.graph.nodes.find(n => n.id === result.variantIds[0]);
+  const source = result.graph.nodes.find(n => n.id === srcId);
+  source.workflow.graph['6'].inputs.text = 'mutated';
+  source.workflow.bindings.seed.push({ node: '99', input: 'seed' });
+  source.workflow.name = 'mutated';
+  return { text: copy.workflow.graph['6'].inputs.text, seeds: copy.workflow.bindings.seed.length, name: copy.workflow.name };
+}, [await liveGraph(), cmpComfy.node_id, falImg.node_id]);
+check('copy has its own workflow (no shared objects)', aliasing.text === 'a castle' && aliasing.seeds === 1 && aliasing.name === 'renamed later', aliasing);
+// The original's own prompt goes only to workflows with a prompt input.
+const kite = await mcp('add_node', { type: 'image.generate', x: 2200, y: 1400, params: { provider: 'fal', model: 'flux-dev', prompt: 'a red kite' } });
+const kiteCmp = await mcp('compare_node', { node_id: kite.node_id, variants: [
+  { provider: 'comfyui', workflow_node: cmpComfy.node_id },
+  { provider: 'comfyui', workflow_node: fresh.node_id },
+] });
+const g8 = await mcp('get_graph');
+const withPrompt = g8.nodes.find(n => n.id === kiteCmp.variant_node_ids?.[0]);
+const noPrompt = g8.nodes.find(n => n.id === kiteCmp.variant_node_ids?.[1]);
+check('own prompt passed to a workflow with a prompt input', kiteCmp.ok && withPrompt?.prompt === 'a red kite' && !(kiteCmp.adjusted_params?.[withPrompt.id] || []).some(c => c.startsWith('prompt')), { withPrompt, changes: kiteCmp.adjusted_params });
+check('own prompt withheld from a workflow without one', noPrompt && noPrompt.prompt === undefined
+  && (kiteCmp.adjusted_params?.[noPrompt.id] || []).includes('prompt not used (the workflow has no prompt input)'), { noPrompt, changes: kiteCmp.adjusted_params });
+
 // The Inspector lists the workflows, marking same-named ones by node id.
 await selectNode(falImg.node_id);
 text = await page.evaluate(() => document.body.innerText);
