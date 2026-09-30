@@ -217,7 +217,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "compare_node",
-            "description": "Compare a generator node across providers / models: adds one copy of the node per variant (same inputs, settings adjusted to what each model accepts), feeds the original and all copies into a new Pick node, and moves the original's downstream connections onto the Pick. Run the Pick node to run every variant; the run then pauses until the user picks. Each variant is a separate paid run.",
+            "description": "Compare a generator node across providers / models: adds one copy of the node per variant (same inputs, settings adjusted to what each model accepts), feeds the original and all copies into a new Pick node, and moves the original's downstream connections onto the Pick. Run the Pick node to run every variant; the run then pauses until the user picks. Each variant is a separate paid run. A `comfyui.workflow` node is compared against the cloud models for what it produces (image.generate or video.generate): its connected prompt and media are wired into each copy's ports, and seed / count / negative_prompt carry over where the model takes them.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

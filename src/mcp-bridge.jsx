@@ -455,7 +455,7 @@ async function mcpCompareNode(args, stateRef, dispatch) {
   const variants = (args.variants || []).map(v => ({ provider: v.provider, model: v.model }));
   const result = buildComparison(found.proj.graph, args.node_id, variants);
   if (result.error) {
-    const options = comparisonOptions(found.node.capability || '').map(o => `${o.provider}${o.model ? `/${o.model}` : ''}`);
+    const options = comparisonTargets(found.node).map(o => `${o.provider}${o.model ? `/${o.model}` : ''}`);
     return { error: `${result.error}${options.length ? ` — options: ${options.join(', ')}` : ''}` };
   }
   dispatch({ type: 'PATCH_GRAPH', fn: g => buildComparison(g, args.node_id, variants).graph || g });

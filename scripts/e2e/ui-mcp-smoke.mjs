@@ -476,6 +476,53 @@ await page.waitForTimeout(1500);
 const saved3 = await page.evaluate(() => window.__saved.at(-1));
 check('ComfyUI server saved in config', saved3.config.comfyuiUrl === 'http://192.168.1.20:8188', saved3.config);
 
+// 20. Compare a ComfyUI node against cloud models.
+const cmpComfy = await mcp('add_node', { type: 'comfyui', x: 1400, y: 1400, params: { workflow: comfyGraph, workflow_name: 'local sdxl', seed: 7, count: 6, negative_prompt: 'blurry text' } });
+const sink = await mcp('add_node', { type: 'output', x: 1800, y: 1400 });
+await mcp('connect_nodes', { from_node: 'f1', to_node: cmpComfy.node_id, to_port: 'Reference' });
+await mcp('connect_nodes', { from_node: cmpComfy.node_id, to_node: sink.node_id });
+const toComfy = await mcp('compare_node', { node_id: cmpComfy.node_id, variants: [{ provider: 'comfyui' }] });
+check('ComfyUI is not a comparison target', !!toComfy.error && toComfy.error.includes('fal/flux-dev') && !toComfy.error.includes('comfyui'), toComfy);
+const emptyCmp = await mcp('compare_node', { node_id: fresh.node_id === undefined ? 'x' : (await mcp('add_node', { type: 'comfyui', x: 1400, y: 1700 })).node_id, variants: [{ provider: 'fal', model: 'flux-dev' }] });
+check('ComfyUI node needs a workflow to compare', !!emptyCmp.error && emptyCmp.error.includes('import a ComfyUI workflow'), emptyCmp);
+const cc = await mcp('compare_node', { node_id: cmpComfy.node_id, variants: [{ provider: 'fal', model: 'flux-dev' }, { provider: 'fal', model: 'nano-banana' }] });
+const g5 = await mcp('get_graph');
+const flux = g5.nodes.find(n => n.id === cc.variant_node_ids?.[0]);
+const banana = g5.nodes.find(n => n.id === cc.variant_node_ids?.[1]);
+check('ComfyUI compare creates cloud stand-ins', cc.ok && flux?.type === 'image.generate' && flux.provider === 'fal' && flux.model === 'flux-dev' && banana?.model === 'nano-banana', { cc, flux, banana });
+check('settings carried and fitted', flux.params.seed === 7 && flux.params.count === 4 && flux.params.negative_prompt === undefined
+  && ['count 6 → 4', 'negative_prompt not supported', 'prompt taken from the workflow'].every(c => (cc.adjusted_params?.[flux.id] || []).includes(c)), { params: flux.params, changes: cc.adjusted_params });
+check('workflow prompt stands in when none is connected', flux.prompt === 'a castle', flux.prompt);
+const into5 = id => g5.edges.filter(e => e.to === id);
+check('ComfyUI inputs rewired to the stand-in ports', into5(flux.id).length === 1 && into5(flux.id)[0].from === 'f1' && into5(flux.id)[0].to_port === 'img 1', into5(flux.id));
+check('ComfyUI compare feeds a pick and moves downstream', into5(cc.pick_node_id).length === 3 && into5(sink.node_id).length === 1 && into5(sink.node_id)[0].from === cc.pick_node_id, { pick: into5(cc.pick_node_id), sink: into5(sink.node_id) });
+await page.waitForTimeout(1200);
+const savedCmp = await page.evaluate(() => window.__saved.at(-1));
+const cmpGraph = savedCmp.projects.find(p => p.graph.nodes.some(n => n.id === cc.pick_node_id)).graph;
+const fromOutputs = cmpGraph.edges.filter(e => e.to.node === cc.pick_node_id).every(e => {
+  const src = cmpGraph.nodes.find(n => n.id === e.from.node);
+  return src.ports[e.from.port]?.side === 'right';
+});
+check('pick is fed from each node\'s own output port', fromOutputs, cmpGraph.edges.filter(e => e.to.node === cc.pick_node_id));
+const ccRun = await mcp('run_node', { node_id: cc.pick_node_id });
+check('only the cloud variants are paid', ccRun.ok && ccRun.paid_generations === 2 && !ccRun.needs_user_confirmation, ccRun);
+await page.waitForTimeout(1500);
+const ccPick = await mcp('get_node_result', { node_id: cc.pick_node_id });
+check('pick offers the ComfyUI and cloud results', ccPick.state === 'waiting_for_pick' && ccPick.candidates === 3, ccPick);
+// Pick the local result: it flows on as the original's output did.
+await page.evaluate(() => window.AtlasRunner.pick(0));
+await page.waitForTimeout(400);
+const ccPicked = await mcp('get_node_result', { node_id: cc.pick_node_id });
+check('picked ComfyUI result flows on', ccPicked.state === 'done' && ccPicked.outputs?.[0]?.path === `/tmp/${cmpComfy.node_id}.png`, ccPicked);
+// The Inspector offers the same comparison.
+await selectNode(cmpComfy.node_id);
+text = await page.evaluate(() => document.body.innerText);
+if (text.includes('Compare with other models…')) await inspectorClick('Compare with other models…');
+text = await page.evaluate(() => document.body.innerText);
+const compareBlock = text.slice(text.indexOf('COMPARE'), text.indexOf('Create comparison'));
+check('Inspector compares ComfyUI with cloud models', compareBlock.includes('fal.ai · FLUX.1 [dev]') && compareBlock.includes('This ComfyUI run is free')
+  && !compareBlock.split('\n').some(line => line.startsWith('ComfyUI')), compareBlock);
+
 // 11. Clicking a palette entry adds a task node (last: it may land on top of other nodes).
 const before = (await mcp('get_graph')).nodes.length;
 await page.getByText('Upscale video', { exact: true }).first().click();

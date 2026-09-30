@@ -1808,7 +1808,7 @@ function CompareSection({ t, node, graph, dispatch }) {
   const [chosen, setChosen] = React.useState([]);
   const [error, setError] = React.useState('');
   React.useEffect(() => { setOpen(false); setChosen([]); setError(''); }, [node.id]);
-  const options = comparisonOptions(node.capability)
+  const options = comparisonTargets(node)
     .filter(o => !(o.provider === node.provider && (o.model || '') === (node.model || '')));
   if (!options.length) return null;
   const key = o => `${o.provider}|${o.model || ''}`;
@@ -1828,7 +1828,9 @@ function CompareSection({ t, node, graph, dispatch }) {
           onClick={() => setOpen(true)}>Compare with other models…</Btn>
       ) : (<>
         <div style={{ marginTop: 6, color: t.textMute, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.5 }}>
-          Runs the same inputs on each choice and adds a Pick node; whatever you pick flows downstream. Every variant is a separate paid run.
+          {providerManifest(node.provider)?.workflow
+            ? 'Runs the same inputs on cloud models for comparison and adds a Pick node; whatever you pick flows downstream. This ComfyUI run is free; each cloud variant is a paid run.'
+            : 'Runs the same inputs on each choice and adds a Pick node; whatever you pick flows downstream. Every variant is a separate paid run.'}
         </div>
         <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {options.map(o => {
@@ -1980,7 +1982,7 @@ function TaskInspector({ t, node, graph, onPatch, dispatch }) {
         onSet={(spec, value) => commit(setTaskParam(node, spec, value))}/>
     ))}
 
-    {!raw && !manifest?.workflow && <CompareSection t={t} node={node} graph={graph} dispatch={dispatch}/>}
+    {!raw && (!manifest?.workflow || node.workflow) && <CompareSection t={t} node={node} graph={graph} dispatch={dispatch}/>}
 
     <TaskCommandPreview t={t} node={node}/>
   </>);

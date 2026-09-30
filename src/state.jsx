@@ -1012,6 +1012,64 @@ function comparisonOptions(capability) {
   });
 }
 
+// A ComfyUI workflow node is compared as the standard generator for what it
+// produces; other nodes on their own capability.
+const COMPARE_AS = { image: 'image.generate', video: 'video.generate' };
+function comparisonCapability(node) {
+  if (providerManifest(node?.provider)?.workflow) return COMPARE_AS[taskOutputKind(node)] || null;
+  return node?.capability || null;
+}
+
+// What a node can be compared against. Workflow providers (ComfyUI) are never
+// a target: a copy would have no workflow to run.
+function comparisonTargets(node) {
+  const capability = comparisonCapability(node);
+  if (!capability) return [];
+  return comparisonOptions(capability).filter(o => !providerManifest(o.provider)?.workflow);
+}
+
+// A standard generator node standing in for a ComfyUI node: the variant's
+// defaults plus the seed / count / negative prompt it accepts (clamped to its
+// range). Returns { node, changes }.
+function workflowVariant(original, capability, variant) {
+  let node = spawnTaskNode(capability, variant.provider);
+  if (variant.model && node.model !== variant.model) node = switchTaskModel(node, variant.model).node;
+  const changes = [];
+  const carried = {
+    seed: original.params?.seed,
+    count: original.params?.count,
+    negative_prompt: original.provider_params?.negative_prompt,
+  };
+  Object.entries(carried).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    const spec = nodeParamSpecs(node).find(s => s.key === key);
+    if (!spec) { changes.push(`${key} not supported`); return; }
+    let v = value;
+    if (typeof v === 'number' && spec.max != null && v > spec.max) { changes.push(`${key} ${v} → ${spec.max}`); v = spec.max; }
+    if (typeof v === 'number' && spec.min != null && v < spec.min) { changes.push(`${key} ${v} → ${spec.min}`); v = spec.min; }
+    node = setTaskParam(node, spec, v);
+  });
+  return { node, changes };
+}
+
+// Incoming edges of a ComfyUI node re-aimed at a standard node's ports: each
+// input goes to the next free port of its kind, in port order. Inputs with no
+// such port are dropped and listed.
+function remapInputsTo(original, copy, incoming) {
+  const used = new Set();
+  const edges = [];
+  const dropped = [];
+  [...incoming].sort((a, b) => a.to.port - b.to.port).forEach(e => {
+    const port = original.ports?.[e.to.port];
+    if (!port) return;
+    const idx = (copy.ports || []).findIndex((p, i) => p.side === 'left' && !used.has(i) && p.kind === port.kind);
+    if (idx < 0) { dropped.push(port.label || port.kind); return; }
+    used.add(idx);
+    edges.push({ ...e, to: { ...e.to, node: copy.id, port: idx } });
+  });
+  return { edges, dropped };
+}
+
 // Duplicate a generator node once per variant ({ provider, model }), feed
 // the original and every copy into a new Pick node, and move the original's
 // downstream edges onto the Pick, so whatever the user picks flows on.
@@ -1021,7 +1079,16 @@ function buildComparison(graph, nodeId, variants) {
   if (!original || original.kind !== 'task') return { error: `"${nodeId}" is not a generator node` };
   if (!Array.isArray(variants) || !variants.length) return { error: 'choose at least one provider / model to compare against' };
   if (original.provider_params?._raw_args) return { error: 'reset this node to standard settings before comparing it' };
-  const options = comparisonOptions(original.capability);
+  const fromWorkflow = !!providerManifest(original.provider)?.workflow;
+  if (fromWorkflow && !original.workflow) return { error: 'import a ComfyUI workflow into this node before comparing it' };
+  const capability = comparisonCapability(original);
+  if (!capability) return { error: `a ComfyUI workflow producing ${taskOutputKind(original)} can't be compared with cloud models yet` };
+  const options = comparisonTargets(original);
+  const incoming = graph.edges.filter(e => e.to.node === original.id);
+  // Without a connected prompt the workflow's own prompt text stands in.
+  const hasPromptEdge = incoming.some(e => original.ports?.[e.to.port]?.kind === 'text');
+  const binding = original.workflow?.bindings?.prompt;
+  const workflowPrompt = binding ? original.workflow.graph?.[binding.node]?.inputs?.[binding.input] : undefined;
   const seen = new Set([`${original.provider}|${original.model || ''}`]);
   const nodes = [...graph.nodes];
   const edges = [...graph.edges];
@@ -1033,18 +1100,36 @@ function buildComparison(graph, nodeId, variants) {
     if (seen.has(key)) continue;
     seen.add(key);
     if (!options.some(o => o.provider === variant.provider && (o.model || '') === (variant.model || ''))) {
-      return { error: `${variant.provider}${variant.model ? ` / ${variant.model}` : ''} cannot run ${original.capability}` };
+      return { error: `${variant.provider}${variant.model ? ` / ${variant.model}` : ''} cannot run ${capability}` };
     }
-    let { node: copy, changes: c1 } = switchTaskProvider(original, variant.provider);
-    let c2 = [];
-    if (variant.model && copy.model !== variant.model) ({ node: copy, changes: c2 } = switchTaskModel(copy, variant.model));
     const id = makeNodeId({ nodes }, 'gen');
-    copy = { ...copy, id, x: original.x, y: (original.y || 0) + height * (variantIds.length + 1), thumbs: [] };
+    const place = { id, x: original.x, y: (original.y || 0) + height * (variantIds.length + 1), thumbs: [] };
+    let copy;
+    let noted = [];
+    if (fromWorkflow) {
+      const made = workflowVariant(original, capability, variant);
+      copy = { ...made.node, ...place };
+      noted = made.changes;
+      if (original.prompt) copy.prompt = original.prompt;
+      else if (!hasPromptEdge && typeof workflowPrompt === 'string' && workflowPrompt.trim()) {
+        copy.prompt = workflowPrompt;
+        noted.push('prompt taken from the workflow');
+      }
+      const { edges: mapped, dropped } = remapInputsTo(original, copy, incoming);
+      edges.push(...mapped);
+      dropped.forEach(label => noted.push(`input "${label}" not connected (no free port)`));
+    } else {
+      let { node: switched, changes: c1 } = switchTaskProvider(original, variant.provider);
+      let c2 = [];
+      if (variant.model && switched.model !== variant.model) ({ node: switched, changes: c2 } = switchTaskModel(switched, variant.model));
+      copy = { ...switched, ...place };
+      noted = [...c1, ...c2];
+      // Same inputs as the original (ports match: same capability).
+      incoming.forEach(e => edges.push({ ...e, to: { ...e.to, node: id } }));
+    }
     nodes.push(copy);
     variantIds.push(id);
-    if (c1.length || c2.length) changes[id] = [...c1, ...c2];
-    // Same inputs as the original (ports match: same capability).
-    graph.edges.filter(e => e.to.node === original.id).forEach(e => edges.push({ ...e, to: { ...e.to, node: id } }));
+    if (noted.length) changes[id] = noted;
   }
   if (!variantIds.length) return { error: 'every chosen variant is already on this node' };
 
@@ -1053,18 +1138,19 @@ function buildComparison(graph, nodeId, variants) {
   const pick = {
     ...pickTemplate.spawn(),
     id: pickId,
-    title: `Compare · ${capabilityInfo(original.capability)?.title || original.capability}`,
+    title: `Compare · ${capabilityInfo(capability)?.title || capability}`,
     x: (original.x || 0) + (original.w || 244) + 60,
     y: original.y || 0,
   };
   nodes.push(pick);
-  const outPort = (original.ports || []).findIndex(p => p.side === 'right');
   const pickIn = pick.ports.findIndex(p => p.side === 'left');
   const pickOut = pick.ports.findIndex(p => p.side === 'right');
   const downstream = edges.filter(e => e.from.node === original.id);
   const kept = edges.filter(e => e.from.node !== original.id);
   const rewired = downstream.map(e => ({ ...e, from: { node: pickId, port: pickOut } }));
-  const feeds = [original.id, ...variantIds].map(id => ({ from: { node: id, port: outPort }, to: { node: pickId, port: pickIn } }));
+  // Each node's own output port: a ComfyUI node and its stand-ins differ.
+  const outPort = id => (nodes.find(n => n.id === id)?.ports || []).findIndex(p => p.side === 'right');
+  const feeds = [original.id, ...variantIds].map(id => ({ from: { node: id, port: outPort(id) }, to: { node: pickId, port: pickIn } }));
   return {
     graph: { ...graph, nodes, edges: [...kept, ...feeds, ...rewired] },
     pickId,
@@ -1076,7 +1162,7 @@ function buildComparison(graph, nodeId, variants) {
 Object.assign(window, {
   NODE_TEMPLATES, paletteTemplates, Storage, Executor,
   makeInitialState, appReducer,
-  comparisonOptions, buildComparison, settleInterruptedResults, paidRunSummary, needsPaidRunConfirmation, reportedSpend, DEFAULT_PAID_RUN_LIMIT,
+  comparisonOptions, comparisonCapability, comparisonTargets, buildComparison, settleInterruptedResults, paidRunSummary, needsPaidRunConfirmation, reportedSpend, DEFAULT_PAID_RUN_LIMIT,
   nodeById, nodeIdPrefix, nodeDisplayWidth, normalizeGraphPorts, topoOrder, downstreamNodeIds, defaultRunNodeIds, runOrderNodeIds, activeDepsForRun, canConnect, makeNodeId,
   // Thumb helpers — exported so editor.jsx can reuse without duplicating
   resultThumbs, sourceThumbs, upstreamThumbs, thumbHasUsableSource, usableResultThumbs,

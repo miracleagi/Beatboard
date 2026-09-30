@@ -540,7 +540,7 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 
 - **没有连接真实的 ComfyUI 服务器测试过**（这里无法运行 ComfyUI）。协议按 ComfyUI 的 `server.py` 实现，用模拟服务器验证；新版 ComfyUI 的 `/interrupt` 支持按 prompt id 打断，旧版会忽略这个参数，所以只在确认是我们的提示在运行时才调用。
 - ~~没有逐步进度~~：已补上，见下面"逐步进度"。
-- **不能和云端模型"一键对比"**：原因见上文；以后可以做"把 ComfyUI 节点的端口映射到 `image.generate` 端口"再支持。
+- ~~不能和云端模型"一键对比"~~：已补上，见下面"一键对比"。
 - 只支持无需登录的 ComfyUI 服务器。
 
 ### 逐步进度（websocket）
@@ -568,3 +568,24 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 - 端到端从 66 项增加到 68 项：运行中节点卡片、日志栏和 MCP 都显示 `#3 KSampler 12/20`，完成后恢复正常。
 - **验证测试有效**：让 websocket 永远连不上时，两个 websocket 测试在 10 秒内失败；去掉前端的 `status:` 监听时，端到端测试失败。
 - 调试中发现的测试陷阱：tiny_http 对 upgrade 请求返回的 body reader 就是原始 socket，模拟服务器如果先把 body 读完就会卡死。
+
+### 一键对比
+
+ComfyUI 节点可以和云端模型对比（Inspector 的 Compare 区，或 MCP `compare_node`）。
+
+- **按输出类型对比**：输出图片的工作流对比 `image.generate` 的模型，输出视频的对比 `video.generate` 的模型；输出音频的暂不支持。ComfyUI 本身不会出现在可选项里，因为副本没有工作流可以运行。
+- **每个副本是一个普通生成节点**：用目标模型的默认设置，再带上 ComfyUI 节点的 `seed`、`count`、`negative_prompt`；目标模型不支持的会列出来，超出范围的会调到上限（例如 count 6 → 4）。
+- **输入重新接线**：ComfyUI 节点的每条输入连线，按端口顺序接到副本上第一个同类型的空端口（提示词接 prompt，图片接 img 1、img 2……）；接不上的列在调整说明里。
+- **提示词**：ComfyUI 节点没有连接提示词时，用工作流里保存的提示词文字，这样对比的是同一句话；这一点也会列在调整说明里。
+- **Pick 和下游**：与普通对比相同。原节点和副本都接到新的 Pick 节点，原来的下游改为从 Pick 接出。ComfyUI 节点这次运行仍然免费，只有云端副本计入付费次数。
+- 顺带修改：给 Pick 接线时，改为用每个节点自己的输出端口（副本的端口布局和原节点不同）。实际上保存时 `normalizeGraphPorts` 本来就会把 task 节点的出边改到输出端口，所以旧代码在这里并没有出错，这只是让 `buildComparison` 返回的图本身就是正确的。
+
+**测试**：端到端从 68 项增加到 80 项，覆盖：
+- ComfyUI 不能作为对比目标；还没导入工作流的节点不能对比；
+- 副本的提供商和模型；设置的沿用与调整（count 6 → 4、negative_prompt 不支持）；
+- 使用工作流里的提示词；输入接到 img 1；
+- Pick 有 3 个输入，下游改为从 Pick 接出；
+- 运行时只有 2 次付费；Pick 提供 3 个候选，选中 ComfyUI 的结果后继续往下传；
+- Inspector 里的选项和说明文字。
+
+验证测试有效：去掉"使用工作流里的提示词"之后，有 2 项失败。
