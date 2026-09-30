@@ -896,6 +896,8 @@ function EditorNode({
   const state = runOverride?.state || node.state || 'idle';
   const progress = runOverride?.progress ?? node.progress ?? 0;
   const isRunning = state === 'running';
+  // Step detail from the provider while running, e.g. "#3 KSampler 12/20".
+  const detail = isRunning ? runOverride?.detail : null;
   const isBlocked = state === 'blocked';
   const isWaiting = state === 'waiting_dependencies' || state === 'waiting_user';
   const isError = state === 'error' || isBlocked;
@@ -996,7 +998,7 @@ function EditorNode({
           background: t.bg2,
           borderRadius: '0 0 7px 7px',
         }}>
-          <span style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.35 }}>{node.footer.left}</span>
+          <span data-testid="node-footer-left" style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.35, ...(detail ? { color: t.amber } : {}) }}>{detail || node.footer.left}</span>
           <span style={{
             color: state === 'running' || isWaiting ? t.amber : state === 'done' ? t.green : isError ? t.red : t.textMute,
             whiteSpace: 'nowrap',

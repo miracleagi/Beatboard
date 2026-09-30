@@ -84,6 +84,11 @@ impl RunCtx {
         let _ = self.window.emit(&format!("job:{}", self.run_id), job);
     }
 
+    /// A short line on what the run is doing, e.g. `#3 KSampler 12/20`.
+    pub fn status(&self, text: &str) {
+        let _ = self.window.emit(&format!("status:{}", self.run_id), text);
+    }
+
     pub fn progress(&self, value: f64) {
         let _ = self
             .window

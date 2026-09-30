@@ -352,6 +352,10 @@
       const unlisten = await listen(`progress:${runId}`, (event) => {
         if (!isAborted(ctx)) onProgress(Number(event.payload) || 0);
       });
+      // What the provider is doing right now, e.g. "#3 KSampler 12/20".
+      const unlistenStatus = await listen(`status:${runId}`, (event) => {
+        if (!isAborted(ctx) && typeof ctx.onStatus === 'function') ctx.onStatus(String(event.payload || ''));
+      });
       // A provider job was submitted: the runner stores it so the run can be
       // resumed if Beatboard quits before it finishes.
       const unlistenJob = await listen(`job:${runId}`, (event) => {
@@ -383,6 +387,7 @@
       } finally {
         clearInterval(abortWatch);
         unlisten();
+        unlistenStatus();
         unlistenJob();
       }
     },
@@ -391,6 +396,9 @@
     async resumeNode(node, job, ctx, onProgress) {
       const runId = `resume-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const unlisten = await listen(`progress:${runId}`, (event) => onProgress(Number(event.payload) || 0));
+      const unlistenStatus = await listen(`status:${runId}`, (event) => {
+        if (typeof ctx.onStatus === 'function') ctx.onStatus(String(event.payload || ''));
+      });
       try {
         const result = await invoke('resume_task', { node, job, config: ctx.config, runId });
         return localizeResult(result);
@@ -398,6 +406,7 @@
         return { ok: false, error: String(e) };
       } finally {
         unlisten();
+        unlistenStatus();
       }
     },
   };

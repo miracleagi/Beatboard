@@ -247,6 +247,25 @@ impl Seen {
 /// pending, then running, then lands in /history (unless `never_finishes`).
 /// `history` builds the finished entry for a prompt id.
 fn mock_comfy(history: fn(&str) -> Value, never_finishes: bool) -> (String, Arc<Mutex<Seen>>) {
+    mock_comfy_with(history, never_finishes, false)
+}
+
+/// Queues events for prompts once both the prompt is queued and its
+/// client's websocket is connected, as ComfyUI does for the submitting client.
+#[derive(Default)]
+struct Sockets {
+    senders: BTreeMap<String, std::sync::mpsc::Sender<String>>,
+    /// client id → prompts queued before that client connected
+    waiting: BTreeMap<String, Vec<String>>,
+}
+
+/// With `ws`, the mock also serves /ws: each prompt's run is played as
+/// websocket events and only then shows up in /history.
+fn mock_comfy_with(
+    history: fn(&str) -> Value,
+    never_finishes: bool,
+    ws: bool,
+) -> (String, Arc<Mutex<Seen>>) {
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
     let seen = Arc::new(Mutex::new(Seen::default()));
@@ -254,11 +273,16 @@ fn mock_comfy(history: fn(&str) -> Value, never_finishes: bool) -> (String, Arc<
     std::thread::spawn(move || {
         let mut polls: BTreeMap<String, u32> = BTreeMap::new();
         let mut next = 0;
+        let sockets = Arc::new(Mutex::new(Sockets::default()));
+        let played: Arc<Mutex<Vec<String>>> = Arc::default();
         for mut req in server.incoming_requests() {
             let method = req.method().to_string();
             let url = req.url().to_string();
             let mut body = Vec::new();
-            let _ = std::io::Read::read_to_end(req.as_reader(), &mut body);
+            // An upgrade request's body reader is the raw socket: don't drain it.
+            if !url.starts_with("/ws?") {
+                let _ = std::io::Read::read_to_end(req.as_reader(), &mut body);
+            }
             seen2
                 .lock()
                 .unwrap()
@@ -273,6 +297,37 @@ fn mock_comfy(history: fn(&str) -> Value, never_finishes: bool) -> (String, Arc<
                             .unwrap(),
                     )
             };
+            if ws && url.starts_with("/ws?clientId=") {
+                let client = url.trim_start_matches("/ws?clientId=").to_string();
+                let key = req
+                    .headers()
+                    .iter()
+                    .find(|h| h.field.equiv("Sec-WebSocket-Key"))
+                    .map(|h| h.value.to_string())
+                    .unwrap();
+                let accept =
+                    tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+                let response = tiny_http::Response::empty(101)
+                    .with_header("Upgrade: websocket".parse::<tiny_http::Header>().unwrap())
+                    .with_header("Connection: Upgrade".parse::<tiny_http::Header>().unwrap())
+                    .with_header(
+                        format!("Sec-WebSocket-Accept: {accept}")
+                            .parse::<tiny_http::Header>()
+                            .unwrap(),
+                    );
+                let stream = req.upgrade("websocket", response);
+                let (tx, rx) = std::sync::mpsc::channel::<String>();
+                {
+                    let mut s = sockets.lock().unwrap();
+                    for id in s.waiting.remove(&client).unwrap_or_default() {
+                        tx.send(id).unwrap();
+                    }
+                    s.senders.insert(client, tx);
+                }
+                let played = played.clone();
+                std::thread::spawn(move || play_events(stream, rx, played));
+                continue;
+            }
             let response = match (method.as_str(), url.as_str()) {
                 ("POST", "/upload/image") => {
                     let text = String::from_utf8_lossy(&body);
@@ -293,6 +348,14 @@ fn mock_comfy(history: fn(&str) -> Value, never_finishes: bool) -> (String, Arc<
                     next += 1;
                     let id = format!("p{next}");
                     polls.insert(id.clone(), 0);
+                    if ws {
+                        let client = v["client_id"].as_str().unwrap_or("").to_string();
+                        let mut s = sockets.lock().unwrap();
+                        match s.senders.get(&client) {
+                            Some(tx) => tx.send(id.clone()).unwrap(),
+                            None => s.waiting.entry(client).or_default().push(id.clone()),
+                        }
+                    }
                     reply(
                         200,
                         json!({ "prompt_id": id, "number": next, "node_errors": {} }),
@@ -306,7 +369,12 @@ fn mock_comfy(history: fn(&str) -> Value, never_finishes: bool) -> (String, Arc<
                         continue;
                     };
                     *n += 1;
-                    if never_finishes || *n < 3 {
+                    let pending = if ws {
+                        !played.lock().unwrap().contains(&id)
+                    } else {
+                        *n < 3
+                    };
+                    if never_finishes || pending {
                         reply(200, json!({}))
                     } else {
                         reply(200, json!({ id.clone(): history(&id) }))
@@ -316,7 +384,12 @@ fn mock_comfy(history: fn(&str) -> Value, never_finishes: bool) -> (String, Arc<
                     let mut running = Vec::new();
                     let mut pending = Vec::new();
                     for (id, n) in &polls {
-                        if never_finishes || *n < 3 {
+                        let unfinished = if ws {
+                            !played.lock().unwrap().contains(id)
+                        } else {
+                            *n < 3
+                        };
+                        if never_finishes || unfinished {
                             if *n <= 1 {
                                 pending.push(json!([0, id, {}, {}, []]));
                             } else {
@@ -345,6 +418,70 @@ fn mock_comfy(history: fn(&str) -> Value, never_finishes: bool) -> (String, Arc<
     (base, seen)
 }
 
+/// Play one prompt's run over the websocket: cached loaders, four sampler
+/// steps, decode, save — plus noise a client must ignore.
+fn play_events(
+    stream: Box<dyn tiny_http::ReadWrite + Send>,
+    prompts: std::sync::mpsc::Receiver<String>,
+    played: Arc<Mutex<Vec<String>>>,
+) {
+    use tokio_tungstenite::tungstenite::{protocol::Role, Message, WebSocket};
+    let mut socket = WebSocket::from_raw_socket(stream, Role::Server, None);
+    for id in prompts {
+        let events = [
+            json!({ "type": "status", "data": { "status": { "exec_info": { "queue_remaining": 1 } } } }),
+            json!({ "type": "execution_start", "data": { "prompt_id": id } }),
+            json!({ "type": "execution_cached", "data": { "prompt_id": id, "nodes": ["4", "6", "7", "10", "12"] } }),
+            json!({ "type": "executing", "data": { "prompt_id": id, "node": "3" } }),
+            json!({ "type": "progress", "data": { "prompt_id": id, "node": "3", "value": 1, "max": 4 } }),
+            json!({ "type": "progress", "data": { "prompt_id": id, "node": "3", "value": 2, "max": 4 } }),
+            json!({ "type": "executing", "data": { "prompt_id": "not-ours", "node": "5" } }),
+            json!({ "type": "progress", "data": { "prompt_id": id, "node": "3", "value": 3, "max": 4 } }),
+            json!({ "type": "progress", "data": { "prompt_id": id, "node": "3", "value": 4, "max": 4 } }),
+            json!({ "type": "executing", "data": { "prompt_id": id, "node": "8" } }),
+            json!({ "type": "executing", "data": { "prompt_id": id, "node": "9" } }),
+            json!({ "type": "executed", "data": { "prompt_id": id, "node": "9", "output": {} } }),
+            json!({ "type": "executing", "data": { "prompt_id": id, "node": null } }),
+        ];
+        for (k, e) in events.iter().enumerate() {
+            if k == 5 {
+                // A latent preview: binary, ignored.
+                let _ = socket.send(Message::Binary(vec![0, 0, 0, 1, 0xff]));
+            }
+            if socket.send(Message::Text(e.to_string())).is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        played.lock().unwrap().push(id.clone());
+        let _ = socket.send(Message::Text(
+            json!({ "type": "execution_success", "data": { "prompt_id": id } }).to_string(),
+        ));
+    }
+}
+
+/// Records what a run reports.
+#[derive(Default)]
+struct Recorder {
+    progress: Mutex<Vec<f64>>,
+    status: Mutex<Vec<String>>,
+}
+
+impl Reporter for Recorder {
+    fn progress(&self, fraction: f64) {
+        self.progress.lock().unwrap().push(fraction);
+    }
+    fn status(&self, text: &str) {
+        self.status.lock().unwrap().push(text.to_string());
+    }
+}
+
+struct Quiet;
+
+impl Reporter for Quiet {
+    fn progress(&self, _: f64) {}
+}
+
 fn saved_image(id: &str) -> Value {
     json!({
         "status": { "status_str": "success", "completed": true, "messages": [] },
@@ -365,6 +502,16 @@ fn block_on<F: std::future::Future>(fut: F) -> F::Output {
         .build()
         .unwrap()
         .block_on(fut)
+}
+
+/// Websocket tests: the mock only finishes a prompt after playing its
+/// events, so a client that never listens would wait forever.
+fn within_10s<F: std::future::Future>(fut: F) -> F::Output {
+    block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), fut)
+            .await
+            .expect("timed out: the run never saw its websocket events")
+    })
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -390,13 +537,10 @@ fn uploads_queues_one_prompt_per_seed_waits_and_downloads() {
     let plan = plan_with_local_image(&dir, json!({ "seed": 100, "count": 2 }));
     let client = test_client(&base);
     let reported = Mutex::new(None);
-    let progress = Mutex::new(Vec::new());
-    let (raw, thumbs) = block_on(client.run(
-        &plan,
-        &dir.join("out"),
-        |p| progress.lock().unwrap().push(p),
-        |job| *reported.lock().unwrap() = Some(job.clone()),
-    ))
+    let recorder = Recorder::default();
+    let (raw, thumbs) = block_on(client.run(&plan, &dir.join("out"), &recorder, |job| {
+        *reported.lock().unwrap() = Some(job.clone())
+    }))
     .unwrap();
 
     let seen = seen.lock().unwrap();
@@ -443,11 +587,26 @@ fn uploads_queues_one_prompt_per_seed_waits_and_downloads() {
         "BYTES:/view?filename=p1_00001_.png&subfolder=&type=output"
     );
     assert_eq!(raw["seeds"], json!([100, 101]));
-    let p = progress.lock().unwrap();
+    let p = recorder.progress.lock().unwrap();
     assert_eq!(p.last(), Some(&1.0));
     assert!(
-        p.windows(2).all(|w| w[0] <= w[1]),
-        "progress must not go backwards: {p:?}"
+        p.windows(2).all(|w| w[0] < w[1]),
+        "progress must only move forward: {p:?}"
+    );
+    // No websocket on this server: an estimate and coarse status lines.
+    let status = recorder.status.lock().unwrap();
+    assert!(
+        status.contains(&"uploading inputs".to_string()),
+        "{status:?}"
+    );
+    assert!(
+        status.contains(&"waiting in ComfyUI's queue".to_string()),
+        "{status:?}"
+    );
+    assert!(status.contains(&"running".to_string()), "{status:?}");
+    assert_eq!(
+        status.last().map(String::as_str),
+        Some("downloading results")
     );
     // Nothing to cancel after a clean finish.
     assert_eq!(seen.count("POST", "/interrupt"), 0);
@@ -463,7 +622,7 @@ fn failed_workflow_reports_the_node_that_failed() {
     let (base, _) = mock_comfy(failed, false);
     let dir = scratch("failed");
     let plan = plan_with_local_image(&dir, json!({}));
-    let e = block_on(test_client(&base).run(&plan, &dir, |_| {}, |_| {})).unwrap_err();
+    let e = block_on(test_client(&base).run(&plan, &dir, &Quiet, |_| {})).unwrap_err();
     assert_eq!(e, "ComfyUI failed in #3 KSampler: CUDA out of memory");
 }
 
@@ -474,7 +633,7 @@ fn stopping_removes_queued_prompts_and_interrupts_only_ours() {
     let plan = plan_with_local_image(&dir, json!({ "count": 2 }));
     let client = test_client(&base);
     block_on(async {
-        let run = client.run(&plan, &dir, |_| {}, |_| {});
+        let run = client.run(&plan, &dir, &Quiet, |_| {});
         let _ = tokio::time::timeout(Duration::from_millis(300), run).await;
     });
     let mut done = false;
@@ -515,10 +674,10 @@ fn a_reported_job_can_be_collected_by_a_new_client() {
     let (base, seen) = mock_comfy(saved_image, false);
     let dir = scratch("resume");
     let plan = plan_with_local_image(&dir, json!({ "seed": 1 }));
-    let job = block_on(test_client(&base).submit(&plan, |_| {})).unwrap();
+    let job = block_on(test_client(&base).submit(&plan, "c-1", &Quiet)).unwrap();
     let stored = serde_json::to_value(&job).unwrap();
     let job: Job = serde_json::from_value(stored).unwrap();
-    let (_, thumbs) = block_on(test_client(&job.server).wait(&job, &dir, |_| {})).unwrap();
+    let (_, thumbs) = block_on(test_client(&job.server).wait(&job, &dir, &Quiet)).unwrap();
     assert_eq!(thumbs.len(), 1);
     assert_eq!(
         seen.lock().unwrap().count("POST", "/prompt"),
@@ -539,9 +698,11 @@ fn lost_prompts_fail_instead_of_waiting_forever() {
         seeds: vec![None],
         output: None,
         name: "x".into(),
+        client_id: None,
+        titles: BTreeMap::new(),
     };
     // The mock has never seen "gone": it is neither queued nor in history.
-    let e = block_on(test_client(&base).wait(&job, &scratch("lost"), |_| {})).unwrap_err();
+    let e = block_on(test_client(&base).wait(&job, &scratch("lost"), &Quiet)).unwrap_err();
     assert!(e.contains("no longer has this run"), "{e}");
 }
 
@@ -551,11 +712,120 @@ fn unreachable_server_says_how_to_fix_it() {
     let plan = plan_with_local_image(&dir, json!({}));
     // Nothing listens on port 9 (discard) locally.
     let e =
-        block_on(test_client("http://127.0.0.1:9").run(&plan, &dir, |_| {}, |_| {})).unwrap_err();
+        block_on(test_client("http://127.0.0.1:9").run(&plan, &dir, &Quiet, |_| {})).unwrap_err();
     assert!(
         e.contains("can't reach ComfyUI at http://127.0.0.1:9"),
         "{e}"
     );
+}
+
+// ─── Step progress over the websocket ───────────────────────────────────────
+
+fn ws_client_ids(seen: &Seen) -> Vec<String> {
+    seen.requests
+        .iter()
+        .filter(|(m, u, _)| m == "GET" && u.starts_with("/ws?clientId="))
+        .map(|(_, u, _)| u.trim_start_matches("/ws?clientId=").to_string())
+        .collect()
+}
+
+fn assert_sampler_steps(recorder: &Recorder) {
+    let status = recorder.status.lock().unwrap();
+    for step in [
+        "#3 KSampler 1/4",
+        "#3 KSampler 2/4",
+        "#3 KSampler 4/4",
+        "#8 VAEDecode",
+        "#9 SaveImage",
+    ] {
+        assert!(
+            status.iter().any(|s| s == step),
+            "missing {step}: {status:?}"
+        );
+    }
+    assert!(
+        !status.iter().any(|s| s.contains("#5")),
+        "another client's prompt leaked in: {status:?}"
+    );
+    let p = recorder.progress.lock().unwrap();
+    assert!(p.windows(2).all(|w| w[0] < w[1]), "{p:?}");
+    // Cached loaders (5 of 8 nodes) put the bar well past the start before
+    // sampling; the sampler steps move it further.
+    let mid: Vec<&f64> = p.iter().filter(|&&x| x > 0.5 && x < 0.9).collect();
+    assert!(mid.len() >= 3, "expected step-by-step values: {p:?}");
+    assert_eq!(p.last(), Some(&1.0));
+}
+
+#[test]
+fn websocket_steps_drive_progress_and_status() {
+    let (base, seen) = mock_comfy_with(saved_image, false, true);
+    let dir = scratch("ws");
+    let plan = plan_with_local_image(&dir, json!({ "seed": 1 }));
+    let recorder = Recorder::default();
+    let reported = Mutex::new(None);
+    let (_, thumbs) = within_10s(test_client(&base).run(&plan, &dir, &recorder, |job| {
+        *reported.lock().unwrap() = Some(job.clone())
+    }))
+    .unwrap();
+    assert_eq!(thumbs.len(), 1);
+    assert_sampler_steps(&recorder);
+
+    // The socket was opened before submitting, under the prompt's client id.
+    let job = reported.lock().unwrap().clone().unwrap();
+    let client = job.client_id.clone().unwrap();
+    assert!(client.starts_with("beatboard-"));
+    let seen = seen.lock().unwrap();
+    assert_eq!(ws_client_ids(&seen), vec![client.clone()]);
+    let ws_at = seen
+        .requests
+        .iter()
+        .position(|(_, u, _)| u.starts_with("/ws?"))
+        .unwrap();
+    let prompt_at = seen
+        .requests
+        .iter()
+        .position(|(_, u, _)| u == "/prompt")
+        .unwrap();
+    assert!(
+        ws_at < prompt_at,
+        "connect before submitting so no event is missed"
+    );
+    let body: Value = serde_json::from_slice(&seen.requests[prompt_at].2).unwrap();
+    assert_eq!(body["client_id"], client.as_str());
+    assert_eq!(job.titles.get("3").map(String::as_str), Some("KSampler"));
+}
+
+#[test]
+fn resume_reconnects_with_the_jobs_client_id() {
+    let (base, seen) = mock_comfy_with(saved_image, false, true);
+    let dir = scratch("ws-resume");
+    let plan = plan_with_local_image(&dir, json!({ "seed": 1 }));
+    // Submitted by an earlier session that never listened.
+    let job = block_on(test_client(&base).submit(&plan, "beatboard-earlier", &Quiet)).unwrap();
+    let job: Job = serde_json::from_value(serde_json::to_value(&job).unwrap()).unwrap();
+    let recorder = Recorder::default();
+    within_10s(test_client(&base).wait(&job, &dir, &recorder)).unwrap();
+    assert_eq!(
+        ws_client_ids(&seen.lock().unwrap()),
+        vec!["beatboard-earlier"]
+    );
+    assert_sampler_steps(&recorder);
+}
+
+#[test]
+fn jobs_saved_before_websocket_progress_still_resume() {
+    let (base, _) = mock_comfy(saved_image, false);
+    let dir = scratch("old-job");
+    let plan = plan_with_local_image(&dir, json!({}));
+    let job = block_on(test_client(&base).submit(&plan, "c", &Quiet)).unwrap();
+    let mut stored = serde_json::to_value(&job).unwrap();
+    let obj = stored.as_object_mut().unwrap();
+    obj.remove("client_id");
+    obj.remove("titles");
+    let old: Job = serde_json::from_value(stored).unwrap();
+    assert_eq!(old.client_id, None);
+    let (_, thumbs) = block_on(test_client(&base).wait(&old, &dir, &Quiet)).unwrap();
+    assert_eq!(thumbs.len(), 1);
 }
 
 // ─── Through the provider, from a task node ─────────────────────────────────

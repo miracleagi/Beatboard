@@ -148,13 +148,19 @@ function useRunner({ projectId, projectName, projectOutputDir, graph, dispatch, 
         // Persist the provider job as soon as it exists, so quitting mid-run
         // leaves something to resume instead of paying for a new run.
         onJob: (job) => dispatch({ type: 'SET_RUN_RESULT', projectId, nodeId: id, result: { state: 'running', progress: 0, job } }),
+        // A provider's own account of the step, e.g. "#3 KSampler 12/20".
+        onStatus: (detail) => {
+          if (ref.current.aborted) return;
+          ref.current.results[id] = { state: 'running', progress: ref.current.progress, detail };
+          force();
+        },
       };
       let res;
       try {
         res = await Executor.runNode(node, deps, ctx, (p) => {
           if (ref.current.aborted) return;
           ref.current.progress = p;
-          ref.current.results[id] = { state: 'running', progress: p };
+          ref.current.results[id] = { state: 'running', progress: p, detail: ref.current.results[id]?.detail };
           force();
         });
       } catch (error) {
@@ -1057,7 +1063,7 @@ function EditorCanvas({ project, ui, dispatch, config, theme = 'dark', cliStyle,
         {runner.state.waitingForPick ? (
           <span><span style={{ color: t.accent }}>[pick]</span> 请在弹窗中选择一张图片继续…</span>
         ) : runner.state.active && runner.state.current ? (
-          <span><span style={{ color: t.amber }}>[run]</span> {runner.state.current} · {Math.round(runner.state.progress*100)}%</span>
+          <span><span style={{ color: t.amber }}>[run]</span> {runner.state.current} · {Math.round(runner.state.progress*100)}%{runner.state.results[runner.state.current]?.detail ? ` · ${runner.state.results[runner.state.current].detail}` : ''}</span>
         ) : Object.keys(runner.state.results).some(k => runner.state.results[k].state === 'error' || runner.state.results[k].state === 'blocked') ? (
           <span><span style={{ color: t.red }}>[blocked]</span> required outputs are missing · check node ports</span>
         ) : Object.keys(project.runResults).length > 0 ? (

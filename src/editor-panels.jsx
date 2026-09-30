@@ -1502,13 +1502,16 @@ function ProviderKeyRow({ t, manifest }) {
 // same request instead of submitting (and paying for) a new one.
 function ResumeJob({ t, node, job, project, state, dispatch }) {
   const [progress, setProgress] = React.useState(null);
+  const [detail, setDetail] = React.useState('');
   if (typeof window.AtlasExecutor?.resumeNode !== 'function') return null;
   const setResult = (result) => dispatch({ type: 'SET_RUN_RESULT', projectId: project.id, nodeId: node.id, result });
   const resume = async () => {
     setProgress(0);
+    setDetail('');
     setResult({ state: 'running', progress: 0, job });
-    const res = await window.AtlasExecutor.resumeNode(node, job, { config: state.config }, setProgress);
+    const res = await window.AtlasExecutor.resumeNode(node, job, { config: state.config, onStatus: setDetail }, setProgress);
     setProgress(null);
+    setDetail('');
     if (res?.ok) {
       setResult(withoutKeys(res, ['ok'], { state: 'done', progress: 1 }));
     } else {
@@ -1523,7 +1526,7 @@ function ResumeJob({ t, node, job, project, state, dispatch }) {
         {progress === null ? 'Resume' : `Resuming… ${Math.round(progress * 100)}%`}
       </Btn>
       <span style={{ color: t.textMute, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.4 }}>
-        collects {providerName(node.provider)} request {String(job.request_id || '').slice(0, 8)}… without re-running it
+        {detail || `collects ${providerName(node.provider)} request ${String(job.request_id || job.prompt_ids?.[0] || '').slice(0, 8)}… without re-running it`}
       </span>
     </div>
   );

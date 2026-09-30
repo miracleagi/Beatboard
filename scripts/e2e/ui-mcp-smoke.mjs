@@ -66,7 +66,13 @@ window.__runNode = async ({ node, runId }) => {
   const kind = node.capability.startsWith('video') ? 'video' : 'image';
   const thumb = { type: kind, path: '/tmp/' + node.id + (kind === 'video' ? '.mp4' : '.png'), url: '/tmp/' + node.id, chosen: true };
   window.__lastNode = node;
-  if (node.provider === 'comfyui') return { ok: true, provider: 'comfyui', thumbs: [{ ...thumb, label: 'sdxl · seed 7' }] };
+  if (node.provider === 'comfyui') {
+    // Step progress as the Rust provider reports it from ComfyUI's websocket.
+    (window.__listeners['status:' + runId] || []).forEach(fn => fn({ payload: '#3 KSampler 12/20' }));
+    (window.__listeners['progress:' + runId] || []).forEach(fn => fn({ payload: 0.6 }));
+    await new Promise(r => setTimeout(r, 600));
+    return { ok: true, provider: 'comfyui', thumbs: [{ ...thumb, label: 'sdxl · seed 7' }] };
+  }
   if (node.provider === 'fal') {
     (window.__listeners['job:' + runId] || []).forEach(fn => fn({ payload: { request_id: 'req-' + node.id, status_url: 's', response_url: 'r', cancel_url: 'c', output: kind === 'video' ? 'video' : 'images', model: node.model } }));
     await new Promise(r => setTimeout(r, 50));
@@ -408,7 +414,15 @@ const comfyEdges = g4.edges.filter(e => e.to === comfy.node_id);
 check('rebinding drops the unbound port and its edge only', imgEdge.ok && rebound.ok && comfyEdges.length === 1 && comfyEdges[0].from === 'p0' && comfyEdges[0].to_port === 'prompt'
   && rebound.params.seed === undefined && rebound.params.count === undefined, { rebound, comfyEdges });
 const comfyRun = await mcp('run_node', { node_id: comfy.node_id });
-await page.waitForTimeout(400);
+await page.waitForTimeout(250);
+const comfyLive = await mcp('get_node_result', { node_id: comfy.node_id });
+const liveFooter = await page.evaluate((id) => document.querySelector(`[data-node-id="${id}"] [data-testid="node-footer-left"]`)?.innerText, comfy.node_id);
+const liveLog = await page.evaluate(() => document.body.innerText.includes('#3 KSampler 12/20'));
+check('ComfyUI step shown while running', comfyLive.state === 'running' && comfyLive.detail === '#3 KSampler 12/20' && comfyLive.progress === 0.6
+  && liveFooter === '#3 KSampler 12/20' && liveLog, { comfyLive, liveFooter });
+await page.waitForTimeout(800);
+const doneFooter = await page.evaluate((id) => document.querySelector(`[data-node-id="${id}"] [data-testid="node-footer-left"]`)?.innerText, comfy.node_id);
+check('step detail cleared when done', doneFooter && !doneFooter.includes('KSampler'), doneFooter);
 const comfyResult = await mcp('get_node_result', { node_id: comfy.node_id });
 const sentNode = await page.evaluate(() => window.__lastNode);
 check('ComfyUI run is not a paid generation', comfyRun.ok && !comfyRun.needs_user_confirmation && !comfyRun.paid_generations && comfyResult.state === 'done', { comfyRun, comfyResult });

@@ -534,6 +534,7 @@ async function mcpGetNodeResult(args, stateRef) {
     node_id: args.node_id,
     state,
     ...(state === 'running' ? { progress: Math.round((result.progress || 0) * 100) / 100 } : {}),
+    ...(state === 'running' && result.detail ? { detail: result.detail } : {}),
     ...(state === 'error' || state === 'blocked' ? { error: result.error, blocked_by: result.blockedBy } : {}),
     ...(state === 'interrupted' ? { note: 'Beatboard quit while this ran; the user can Resume it from the Inspector to collect the result without re-running' } : {}),
     ...(state === 'done' ? { outputs: mcpThumbOutputs(result) } : {}),

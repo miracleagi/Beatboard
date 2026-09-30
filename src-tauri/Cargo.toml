@@ -17,7 +17,7 @@ tauri-build = { version = "1", features = [] }
 tauri = { version = "1", features = [ "window-unmaximize", "window-minimize", "window-close", "window-maximize", "window-start-dragging", "dialog-message", "dialog-open", "protocol-asset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "sync", "time", "fs"] }
+tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "sync", "time", "fs", "net"] }
 reqwest = { version = "0.11", features = ["json", "stream"] }
 tiny_http = "0.12"
 flate2 = "1"
@@ -25,6 +25,9 @@ sha2 = "0.10"
 tar = "0.4"
 # macOS Keychain for provider API keys (other platforms use an in-memory store).
 keyring = { version = "3.6", features = ["apple-native"] }
+# ComfyUI step progress over its websocket (ws:// only: no TLS features).
+tokio-tungstenite = { version = "0.21", default-features = false, features = ["connect"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [features]
 default = ["custom-protocol"]

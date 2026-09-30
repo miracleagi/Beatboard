@@ -539,6 +539,32 @@ PixVerse 的第一版 manifest 由现有的 `PIXVERSE_CREATE_SPECS` 和 `NODE_TE
 ### 局限
 
 - **没有连接真实的 ComfyUI 服务器测试过**（这里无法运行 ComfyUI）。协议按 ComfyUI 的 `server.py` 实现，用模拟服务器验证；新版 ComfyUI 的 `/interrupt` 支持按 prompt id 打断，旧版会忽略这个参数，所以只在确认是我们的提示在运行时才调用。
-- **没有逐步进度**：ComfyUI 的采样进度要通过 websocket 获取，目前进度条只按排队、运行、完成估算。
+- ~~没有逐步进度~~：已补上，见下面"逐步进度"。
 - **不能和云端模型"一键对比"**：原因见上文；以后可以做"把 ComfyUI 节点的端口映射到 `image.generate` 端口"再支持。
 - 只支持无需登录的 ComfyUI 服务器。
+
+### 逐步进度（websocket）
+
+- **为什么每次运行用自己的 client id**：ComfyUI 只把执行事件发给提交这个提示的 client id。所以每次运行生成一个 `beatboard-…` id，先连上 `/ws?clientId=<id>`，再用同一个 id 提交，这样不会漏掉开头的事件。id 和节点标题一起存进 job，Resume 时用同一个 id 重新连接，继续收到进度。
+- **怎么算进度**（`comfyui/progress.rs`，纯函数，可单独测试）：
+  - 一个提示的进度 =（已完成或命中缓存的节点数 + 当前节点的步数比例）÷ 工作流节点数；
+  - 多个提示（`count`）平均；
+  - 只前进，不后退。
+- **状态行**：例如 `#3 KSampler 12/20`，多个提示时加上 `2/3 · ` 前缀；排队时显示 "waiting in ComfyUI's queue"，下载时显示 "downloading results"。
+  - Rust 通过新的 `status:<run_id>` 事件发出；
+  - 节点卡片底部、底部日志栏、恢复按钮旁边都会显示；
+  - MCP `get_node_result` 在运行中返回 `detail`。
+- **仍以 `/history` 为准**：websocket 只用来显示进度和提早发现"已经跑完"；是否完成、结果是什么，仍然读 `/history`。连不上 websocket（例如 `https://` 服务器——这个版本没有启用 TLS）、或者中途断开时，退回到原来的估算方式，运行本身不受影响。
+- 同时兼容旧版的 `progress` 消息（没有 prompt id）和新版的 `progress_state` 消息；别人的提示、预览图（二进制帧）、`status` 消息都会忽略。
+- **新依赖**：`tokio-tungstenite` 0.21（只开 `connect`，不含 TLS）、`futures-util`；tokio 增加 `net` 特性。
+
+**测试**：
+- Rust 从 61 个增加到 68 个。模拟服务器真正完成 websocket 握手，逐条发送事件（包括缓存、采样步数、别人的提示、二进制预览），并且只有事件发完之后 `/history` 才会显示完成。覆盖：
+  - 先连接、后提交，两边的 client id 一致；
+  - 采样步数逐步推进进度条；
+  - Resume 用 job 里的 client id 重新连接；
+  - 旧版本保存的、没有 client id 的 job 仍能恢复；
+  - 没有 websocket 时的状态行。
+- 端到端从 66 项增加到 68 项：运行中节点卡片、日志栏和 MCP 都显示 `#3 KSampler 12/20`，完成后恢复正常。
+- **验证测试有效**：让 websocket 永远连不上时，两个 websocket 测试在 10 秒内失败；去掉前端的 `status:` 监听时，端到端测试失败。
+- 调试中发现的测试陷阱：tiny_http 对 upgrade 请求返回的 body reader 就是原始 socket，模拟服务器如果先把 body 读完就会卡死。

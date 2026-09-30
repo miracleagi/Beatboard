@@ -15,20 +15,27 @@
 //   GET  /queue                                                 → { queue_running: [[n, id, …]], queue_pending: […] }
 //   GET  /view?filename=&subfolder=&type=                       → file bytes
 //   POST /queue { delete: [id] }, POST /interrupt { prompt_id }  → cancel
+//   GET  /ws?clientId=…  (websocket)                             → step progress, see progress.rs
 
 use super::{
     inputs, BoxFuture, MediaRef, Provider, ProviderError, RunCtx, TaskOutput, TaskRequest,
 };
 use crate::storage::runs_dir;
 use crate::thumbs::Thumb;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use tokio_tungstenite::tungstenite::Message;
+
+mod progress;
+pub use progress::{new_client_id, Tracker};
 
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8188";
-const CLIENT_ID: &str = "beatboard";
+const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(1000);
 const PROMPT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 /// Polls in a row that find the prompt neither queued nor in history before
@@ -489,6 +496,75 @@ pub struct Job {
     pub seeds: Vec<Option<u64>>,
     pub output: Option<String>,
     pub name: String,
+    /// The client id the prompts were queued under: ComfyUI sends their
+    /// progress only to a websocket connected with it.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Node id → title, for the status line.
+    #[serde(default)]
+    pub titles: BTreeMap<String, String>,
+}
+
+/// Where a run shows how far it got: a 0–1 fraction and a short status line
+/// such as `#3 KSampler 12/20`.
+pub trait Reporter {
+    fn progress(&self, fraction: f64);
+    fn status(&self, _text: &str) {}
+}
+
+impl Reporter for RunCtx {
+    fn progress(&self, fraction: f64) {
+        RunCtx::progress(self, fraction);
+    }
+    fn status(&self, text: &str) {
+        RunCtx::status(self, text);
+    }
+}
+
+/// Reports only forward movement, and each status line once.
+struct Shown<'a, R: Reporter + ?Sized> {
+    to: &'a R,
+    fraction: f64,
+    status: String,
+}
+
+impl<'a, R: Reporter + ?Sized> Shown<'a, R> {
+    fn new(to: &'a R) -> Self {
+        Self {
+            to,
+            fraction: 0.0,
+            status: String::new(),
+        }
+    }
+    fn progress(&mut self, fraction: f64) {
+        if fraction > self.fraction {
+            self.fraction = fraction;
+            self.to.progress(fraction);
+        }
+    }
+    fn status(&mut self, text: &str) {
+        if text != self.status {
+            self.status = text.to_string();
+            self.to.status(text);
+        }
+    }
+}
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Node id → `_meta.title` (or class type), for status lines.
+pub fn node_titles(graph: &Map<String, Value>) -> BTreeMap<String, String> {
+    graph
+        .iter()
+        .map(|(id, n)| {
+            let title = n["_meta"]["title"]
+                .as_str()
+                .or_else(|| n["class_type"].as_str())
+                .unwrap_or("?");
+            (id.clone(), title.to_string())
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -646,14 +722,22 @@ impl ComfyClient {
         })
     }
 
-    /// Upload inputs and queue one prompt per seed.
-    pub async fn submit(&self, plan: &Plan, progress: impl Fn(f64)) -> Result<Job, String> {
-        progress(0.02);
+    /// Upload inputs and queue one prompt per seed under `client_id`.
+    pub async fn submit(
+        &self,
+        plan: &Plan,
+        client_id: &str,
+        report: &(impl Reporter + ?Sized),
+    ) -> Result<Job, String> {
+        report.progress(0.02);
+        if !plan.uploads.is_empty() {
+            report.status("uploading inputs");
+        }
         let mut uploaded = Vec::new();
         for (_, media) in &plan.uploads {
             uploaded.push(self.upload(media).await?);
         }
-        progress(0.05);
+        report.progress(0.05);
         let mut guard = CancelOnDrop {
             client: self.clone(),
             ids: Vec::new(),
@@ -664,7 +748,7 @@ impl ComfyClient {
                 .send(
                     self.http
                         .post(format!("{}/prompt", self.base))
-                        .json(&json!({ "prompt": graph, "client_id": CLIENT_ID })),
+                        .json(&json!({ "prompt": graph, "client_id": client_id })),
                 )
                 .await?;
             if !(200..300).contains(&status) {
@@ -684,7 +768,62 @@ impl ComfyClient {
             seeds: plan.seeds.clone(),
             output: plan.bindings.output.clone(),
             name: plan.name.clone(),
+            client_id: Some(client_id.to_string()),
+            titles: node_titles(&plan.graph),
         })
+    }
+
+    /// Open ComfyUI's websocket for a client id. None when it can't be
+    /// reached (e.g. `wss://`, which this build has no TLS for): progress
+    /// then falls back to an estimate.
+    pub async fn connect_ws(&self, client_id: &str) -> Option<Socket> {
+        let ws = self
+            .base
+            .replacen("http://", "ws://", 1)
+            .replacen("https://", "wss://", 1);
+        let url = format!("{ws}/ws?clientId={}", encode(client_id));
+        match tokio::time::timeout(WS_CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url)).await
+        {
+            Ok(Ok((socket, _))) => Some(socket),
+            _ => None,
+        }
+    }
+
+    /// Read websocket messages until `until`, feeding them to the tracker.
+    /// Returns true once `prompt` finished executing (time to read its
+    /// history). Without a socket this just sleeps.
+    async fn listen<R: Reporter + ?Sized>(
+        socket: &mut Option<Socket>,
+        tracker: &mut Tracker,
+        shown: &mut Shown<'_, R>,
+        prompt: usize,
+        until: Instant,
+    ) -> bool {
+        loop {
+            let Some(ws) = socket.as_mut() else {
+                tokio::time::sleep_until(until.into()).await;
+                return false;
+            };
+            let now = Instant::now();
+            if now >= until {
+                return false;
+            }
+            match tokio::time::timeout(until - now, ws.next()).await {
+                Err(_) => return false,
+                Ok(Some(Ok(Message::Text(text)))) => {
+                    if let Some(u) = tracker.on_message(&text) {
+                        shown.progress(0.05 + 0.85 * u.fraction);
+                        shown.status(&u.status);
+                        if u.finished == Some(prompt) {
+                            return true;
+                        }
+                    }
+                }
+                Ok(Some(Ok(_))) => {} // binary previews, pings
+                // Closed or broken: carry on by polling alone.
+                Ok(Some(Err(_))) | Ok(None) => *socket = None,
+            }
+        }
     }
 
     /// Remove queued prompts; interrupt whichever of them is running. Only
@@ -769,8 +908,25 @@ impl ComfyClient {
         &self,
         job: &Job,
         dir: &Path,
-        progress: impl Fn(f64),
+        report: &(impl Reporter + ?Sized),
     ) -> Result<(Value, Vec<Thumb>), String> {
+        let socket = match &job.client_id {
+            Some(id) => self.connect_ws(id).await,
+            None => None,
+        };
+        self.follow(job, dir, socket, report).await
+    }
+
+    async fn follow<R: Reporter + ?Sized>(
+        &self,
+        job: &Job,
+        dir: &Path,
+        mut socket: Option<Socket>,
+        report: &R,
+    ) -> Result<(Value, Vec<Thumb>), String> {
+        let mut shown = Shown::new(report);
+        shown.fraction = 0.05; // `submit` got this far
+        let mut tracker = Tracker::new(job.prompt_ids.clone(), job.titles.clone());
         let mut guard = CancelOnDrop {
             client: self.clone(),
             ids: job.prompt_ids.clone(),
@@ -787,6 +943,12 @@ impl ComfyClient {
                 }
                 let frac = match self.poll(id).await {
                     Ok(Poll::Done(entry)) => break entry,
+                    // The websocket reports this run; polling only watches
+                    // for the end.
+                    Ok(Poll::Running) if socket.is_some() => {
+                        missing = 0;
+                        0.0
+                    }
                     Ok(Poll::Missing) => {
                         missing += 1;
                         if missing >= MAX_MISSING_POLLS {
@@ -799,10 +961,12 @@ impl ComfyClient {
                     }
                     Ok(Poll::Queued) => {
                         missing = 0;
+                        shown.status("waiting in ComfyUI's queue");
                         0.0
                     }
                     Ok(Poll::Running) => {
                         missing = 0;
+                        shown.status("running");
                         let since = *running_since.get_or_insert_with(Instant::now);
                         // Ease towards 0.9; per-step progress needs the websocket.
                         let t = since.elapsed().as_secs_f64();
@@ -816,13 +980,16 @@ impl ComfyClient {
                         0.0
                     }
                 };
-                progress(0.05 + 0.85 * (i as f64 + frac) / total);
-                tokio::time::sleep(self.poll_interval).await;
+                shown.progress(0.05 + 0.85 * (i as f64 + frac) / total);
+                let until = Instant::now() + self.poll_interval;
+                Self::listen(&mut socket, &mut tracker, &mut shown, i, until).await;
             };
             guard.ids.retain(|x| x != id);
             finished.push(entry);
         }
         guard.ids.clear();
+        drop(socket);
+        shown.status("downloading results");
 
         tokio::fs::create_dir_all(dir)
             .await
@@ -853,7 +1020,7 @@ impl ComfyClient {
                 });
             }
         }
-        progress(1.0);
+        shown.progress(1.0);
         // Keep what's useful for debugging; the full history repeats the graph.
         let raw = json!({
             "server": job.server,
@@ -868,16 +1035,19 @@ impl ComfyClient {
     }
 
     /// Submit, report the job (so it can be resumed after a restart), wait.
+    /// The websocket is opened first so no event of the run is missed.
     pub async fn run(
         &self,
         plan: &Plan,
         dir: &Path,
-        progress: impl Fn(f64),
+        report: &(impl Reporter + ?Sized),
         on_submitted: impl FnOnce(&Job),
     ) -> Result<(Value, Vec<Thumb>), String> {
-        let job = self.submit(plan, &progress).await?;
+        let client_id = new_client_id();
+        let socket = self.connect_ws(&client_id).await;
+        let job = self.submit(plan, &client_id, report).await?;
         on_submitted(&job);
-        self.wait(&job, dir, progress).await
+        self.follow(&job, dir, socket, report).await
     }
 }
 
@@ -924,12 +1094,9 @@ impl Provider for ComfyUIProvider {
                 .map_err(ProviderError::Remote)?
                 .join("comfyui");
             let (raw, thumbs) = ComfyClient::new(base)
-                .run(
-                    &plan,
-                    &dir,
-                    |p| ctx.progress(p),
-                    |job| ctx.job(serde_json::to_value(job).unwrap_or_default()),
-                )
+                .run(&plan, &dir, ctx, |job| {
+                    ctx.job(serde_json::to_value(job).unwrap_or_default())
+                })
                 .await
                 .map_err(ProviderError::Remote)?;
             Ok(TaskOutput {
@@ -952,7 +1119,7 @@ impl Provider for ComfyUIProvider {
                 .map_err(ProviderError::Remote)?
                 .join("comfyui");
             let (raw, thumbs) = ComfyClient::new(job.server.clone())
-                .wait(&job, &dir, |p| ctx.progress(p))
+                .wait(&job, &dir, ctx)
                 .await
                 .map_err(ProviderError::Remote)?;
             Ok(TaskOutput {
